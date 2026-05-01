@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>MCO Fuel Station V2</title>
+<style>
+  body { background:#0a0f1e; color:#e0f0ff; font-family:'Segoe UI',sans-serif;
+         display:flex; align-items:center; justify-content:center;
+         min-height:100vh; margin:0; flex-direction:column; gap:12px; }
+  h1   { color:#00d4ff; font-size:22px; margin:0; }
+  p    { color:#7090b0; font-size:14px; margin:0; }
+</style>
+</head>
+<body>
+  <h1>MCO Fuel Station V2</h1>
+  <p>Upload the full web interface via /update-html</p>
+  <p id="ws">Connecting...</p>
+<script>
+  const ws = new WebSocket('ws://' + location.hostname + ':81');
+  ws.onopen  = () => document.getElementById('ws').textContent = 'Connected';
+  ws.onclose = () => document.getElementById('ws').textContent = 'Disconnected';
+  ws.onmessage = e => console.log(e.data);
+</script>
+</body>
+</html>

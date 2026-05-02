@@ -3,7 +3,7 @@
 #include "../heli/HeliLib.h"
 
 // ═══════════════════════════════════════════════════════════════════
-// MCO Fuel Station V2 — TFT Display Implementation
+// MCP Fuel Station V2 — TFT Display Implementation
 // ST7735S 128×160
 // Screen 0: Rainbow gauge  Screen 1: Heli select  Screen 2: Session
 // ═══════════════════════════════════════════════════════════════════

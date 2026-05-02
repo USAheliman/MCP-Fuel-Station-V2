@@ -3,7 +3,7 @@
 #include <Wire.h>
 
 // ═══════════════════════════════════════════════════════════════════
-// MCO Fuel Station V2 — Sensors Implementation
+// MCP Fuel Station V2 — Sensors Implementation
 // ═══════════════════════════════════════════════════════════════════
 
 volatile uint32_t fillPulses  = 0;

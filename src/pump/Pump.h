@@ -2,7 +2,7 @@
 #include <Arduino.h>
 
 // ═══════════════════════════════════════════════════════════════════
-// MCO Fuel Station V2 — Pump Control
+// MCP Fuel Station V2 — Pump Control
 // BTS7960 H-bridge, closed-loop PI controller, ramp
 // Ported 1:1 from V1 Teensy src/main.cpp
 // ═══════════════════════════════════════════════════════════════════

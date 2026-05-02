@@ -2,7 +2,7 @@
 #include <Arduino.h>
 
 // ═══════════════════════════════════════════════════════════════════
-// MCO Fuel Station V2 — Power Management
+// MCP Fuel Station V2 — Power Management
 // Pololu SV Mini power switch control via GPIO16/17
 // Encoder SW doubles as power button (OR gate → Pololu A pin)
 // Short press: screen/function  Long press 3s+: shutdown

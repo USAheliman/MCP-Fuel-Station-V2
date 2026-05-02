@@ -1,7 +1,7 @@
 #pragma once
 
 // ═══════════════════════════════════════════════════════════════════
-// MCO Fuel Station V2 — Pin Definitions
+// MCP Fuel Station V2 — Pin Definitions
 // ESP32-S3 DevKitC-1 N16R8
 // Circuit Diagram Rev 2.0
 // ═══════════════════════════════════════════════════════════════════

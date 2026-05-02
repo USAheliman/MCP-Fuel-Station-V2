@@ -4,7 +4,7 @@
 #include "../pump/Pump.h"
 
 // ═══════════════════════════════════════════════════════════════════
-// MCO Fuel Station V2 — Power Management
+// MCP Fuel Station V2 — Power Management
 // ═══════════════════════════════════════════════════════════════════
 
 static ShortPressCb gShortPressCb = nullptr;

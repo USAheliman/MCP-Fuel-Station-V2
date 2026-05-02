@@ -2,7 +2,7 @@
 #include "../../include/pins.h"
 
 // ═══════════════════════════════════════════════════════════════════
-// MCO Fuel Station V2 — Pump Control Implementation
+// MCP Fuel Station V2 — Pump Control Implementation
 // Ported directly from V1 Teensy src/main.cpp
 // BTS7960 LEDC PWM (replaces Teensy analogWrite)
 // ═══════════════════════════════════════════════════════════════════

@@ -15,7 +15,7 @@
 #include "web/WebServer.h"
 
 // ═══════════════════════════════════════════════════════════════════
-// MCO Fuel Station V2 — main.cpp
+// MCP Fuel Station V2 — main.cpp
 // ESP32-S3 N16R8 — single board
 // All V1 Teensy logic ported here, Nextion replaced by TFT + encoder
 // ═══════════════════════════════════════════════════════════════════
@@ -473,7 +473,7 @@ void setup()
 {
     Serial.begin(115200);
     delay(300);
-    Serial.printf("\nMCO Fuel Station V2  %s  %s %s\n",
+    Serial.printf("\nMCP Fuel Station V2  %s  %s %s\n",
                   FW_VERSION, FW_BUILD_DATE, FW_BUILD_TIME);
 
     HeliLib_Init();
@@ -545,7 +545,7 @@ void loop()
     static bool ipMsgCleared = false;
     if (!ipMsgCleared && now >= 6000) {
         ipMsgCleared = true;
-        SetMessage("MCO Fuel Station V2", MSG_IDLE);
+        SetMessage("MCP Fuel Station V2", MSG_IDLE);
     }
 
     // Refresh TFT at ~10Hz

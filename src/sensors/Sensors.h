@@ -2,7 +2,7 @@
 #include <Arduino.h>
 
 // ═══════════════════════════════════════════════════════════════════
-// MCO Fuel Station V2 — Sensors
+// MCP Fuel Station V2 — Sensors
 // Flow, tank full/detect, battery voltage, pressure (ABP2)
 // ═══════════════════════════════════════════════════════════════════
 

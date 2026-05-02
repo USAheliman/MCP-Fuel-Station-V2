@@ -1,4 +1,4 @@
-# MCO Fuel Station V2 — 16MB flash partition table
+# MCP Fuel Station V2 — 16MB flash partition table
 # factory = initial boot target (avoids blank-otadata boot failure)
 # ota_0 / ota_1 = OTA update slots (2MB each, firmware is <1MB)
 # Name,   Type, SubType,  Offset,    Size,     Flags

@@ -3,7 +3,7 @@
 #include <TFT_eSPI.h>
 
 // ═══════════════════════════════════════════════════════════════════
-// MCO Fuel Station V2 — TFT Display
+// MCP Fuel Station V2 — TFT Display
 // ST7735S 128×160, 3 screens navigated by rotary encoder
 //
 // Screen 0 — GAUGE    (rainbow arc, heli name, message bar)

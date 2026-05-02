@@ -4,7 +4,7 @@
 #include <ArduinoJson.h>
 
 // ═══════════════════════════════════════════════════════════════════
-// MCO Fuel Station V2 — Heli Model Library
+// MCP Fuel Station V2 — Heli Model Library
 // Ported from V1 SD/model system → LittleFS JSON (already on ESP32)
 // ═══════════════════════════════════════════════════════════════════
 

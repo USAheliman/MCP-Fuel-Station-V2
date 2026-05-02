@@ -9,7 +9,7 @@
 #include <esp_ota_ops.h>
 
 // ═══════════════════════════════════════════════════════════════════
-// MCO Fuel Station V2 — Web Server
+// MCP Fuel Station V2 — Web Server
 // Connects to HOME_SSID (SilverLining) + always raises AP fallback.
 // REST API, WebSocket live data, and OTA firmware management.
 // OTA page: http://<ip>/ota  or  http://fuelstation.local/ota
@@ -36,7 +36,7 @@ static const char OTA_HTML[] PROGMEM = R"OTA(<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MCO Fuel Station - OTA</title>
+<title>MCP Fuel Station - OTA</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,sans-serif;background:#0f172a;color:#e2e8f0;padding:16px}
@@ -65,7 +65,7 @@ h1{font-size:20px;color:#4ade80;margin-bottom:2px}
 #st{margin-top:8px;font-size:13px;color:#64748b;min-height:16px}
 .empty{text-align:center;color:#475569;font-size:13px;padding:12px 0}
 </style></head><body>
-<h1>MCO Fuel Station</h1>
+<h1>MCP Fuel Station</h1>
 <div class="sub">Over-the-Air Firmware Update</div>
 <div class="card">
 <h2>Stored Versions</h2>
@@ -516,7 +516,7 @@ static void handleRoot()
         f.close();
     } else {
         httpServer.send(200, "text/html",
-            "<h2>MCO Fuel Station V2</h2>"
+            "<h2>MCP Fuel Station V2</h2>"
             "<p><a href='/ota'>OTA Firmware Update</a></p>");
     }
 }

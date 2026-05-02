@@ -1,7 +1,7 @@
 #include "HeliLib.h"
 
 // ═══════════════════════════════════════════════════════════════════
-// MCO Fuel Station V2 — Heli Model Library Implementation
+// MCP Fuel Station V2 — Heli Model Library Implementation
 // Storage: LittleFS /models/<name>/config.json
 // Mirrors V1 SD structure but uses JSON (same as V1 ESP32 side)
 // ═══════════════════════════════════════════════════════════════════

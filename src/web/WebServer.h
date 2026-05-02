@@ -2,7 +2,7 @@
 #include <Arduino.h>
 
 // ═══════════════════════════════════════════════════════════════════
-// MCO Fuel Station V2 — Web Server
+// MCP Fuel Station V2 — Web Server
 // Ported directly from V1 esp32_fuel_station/src/main.cpp
 // Wi-Fi AP (+ optional home WiFi), REST API, WebSocket live data
 // mDNS: http://fuelstation.local

@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <LittleFS.h>
+#include <WiFi.h>
+#include <ESP32Encoder.h>
 
 #include "pins.h"
 #include "version.h"
@@ -405,14 +407,30 @@ static void UpdateBattery()
     }
 }
 
-// ── Encoder handler (called from interrupt-safe context) ──────────
-static int32_t lastEncPos = 0;
-void OnEncoderChange(int32_t pos)
+// ── Rotary encoder ────────────────────────────────────────────────
+static ESP32Encoder encoder;
+static int32_t       lastEncPos = 0;
+
+static void encoderPoll()
 {
-    int delta = (pos > lastEncPos) ? 1 : -1;
+    int32_t pos = (int32_t)encoder.getCount();
+    if (pos == lastEncPos) return;
+
+    static int32_t  acc = 0;
+    static uint32_t lastScrollMs = 0;
+    uint32_t now = millis();
+
+    acc += (pos - lastEncPos);
     lastEncPos = pos;
+
+    // attachHalfQuad = 2 raw counts per physical detent; wait for a full detent
+    if (acc > -2 && acc < 2) return;
+    if (now - lastScrollMs < 50) { acc = 0; return; }
+
+    lastScrollMs = now;
     Power_UpdateActivity();
-    Display_EncoderScroll(delta);
+    Display_EncoderScroll(acc > 0 ? 1 : -1);
+    acc = 0;
 }
 
 // ── Power button short press ──────────────────────────────────────
@@ -468,16 +486,27 @@ void setup()
     Power_Init(OnShortPress, OnShutdown);
     WebServer_Init();
 
-    // Encoder setup using ESP32Encoder library
-    // (full encoder.cpp implementation goes in src/ui/Encoder.cpp)
-    // See Encoder.h — interrupt driven, calls OnEncoderChange
+    // Push network IPs to display (shown on SCREEN_NET, screen 3)
+    {
+        String staIP = WebServer_GetLocalIP();
+        String apIP  = WiFi.softAPIP().toString();
+        Display_SetNetworkIP(staIP.c_str(), apIP.c_str());
+
+        // Show IP in the message bar for first 6 seconds after boot
+        char ipMsg[40];
+        snprintf(ipMsg, sizeof(ipMsg), "OTA: %s/ota", staIP.c_str());
+        SetMessage(ipMsg, MSG_IDLE);
+    }
+
+    ESP32Encoder::useInternalWeakPullResistors = puType::UP;
+    encoder.attachHalfQuad(PIN_ENC_DT, PIN_ENC_CLK);
+    encoder.setCount(0);
+    lastEncPos = 0;
 
     BuzzerStartup();
 
-    // Populate initial display data
     strncpy(gDisplay.heliName, heliModels[activeModelIndex].name,
             sizeof(gDisplay.heliName) - 1);
-    SetMessage("MCO Fuel Station V2", MSG_IDLE);
     gDisplay.battPct = Sensors_BattPct();
 
     Display_SetScreen(SCREEN_GAUGE);
@@ -491,6 +520,7 @@ void loop()
 {
     uint32_t now = millis();
 
+    encoderPoll();
     Sensors_Update();
     Pump_UpdateRamp();
 
@@ -510,6 +540,13 @@ void loop()
     gDisplay.pumpRunning  = PumpEnabled;
     gDisplay.sensorFitted = Sensors_IsTankSensorFitted();
     gDisplay.tankFull     = Sensors_IsTankFull();
+
+    // Clear startup IP message after 6 s; then show normal idle text
+    static bool ipMsgCleared = false;
+    if (!ipMsgCleared && now >= 6000) {
+        ipMsgCleared = true;
+        SetMessage("MCO Fuel Station V2", MSG_IDLE);
+    }
 
     // Refresh TFT at ~10Hz
     static uint32_t lastDisplayMs = 0;

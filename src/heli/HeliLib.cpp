@@ -27,9 +27,9 @@ static void mkdirp(const char* path)
 
 void HeliLib_Init()
 {
-    if (!LittleFS.begin(false)) {
+    if (!LittleFS.begin(false, "/littlefs", 10, "littlefs")) {
         Serial.println("HeliLib: LittleFS mount failed — formatting");
-        LittleFS.begin(true);
+        LittleFS.begin(true, "/littlefs", 10, "littlefs");
     }
     if (!LittleFS.exists("/models")) LittleFS.mkdir("/models");
 }

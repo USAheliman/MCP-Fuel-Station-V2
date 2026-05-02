@@ -10,7 +10,7 @@
 
 #define BTN_DEBOUNCE_MS     50
 #define BTN_LONG_PRESS_MS 3000
-#define BTN_SHORT_PRESS_MS  200
+#define BTN_SHORT_PRESS_MS   80
 #define SCREEN_STANDBY_MS  600000UL   // 10 min
 #define AUTO_SHUTDOWN_MS   900000UL   // 15 min
 

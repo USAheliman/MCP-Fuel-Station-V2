@@ -18,6 +18,16 @@ static bool           needsFullRedraw  = true;
 static GaugeData lastData;
 static bool      lastDataInit = false;
 
+// Network screen IP storage
+static char gNetStaIP[20] = "";
+static char gNetApIP[20]  = "";
+
+void Display_SetNetworkIP(const char* staIP, const char* apIP)
+{
+    strncpy(gNetStaIP, staIP ? staIP : "", sizeof(gNetStaIP) - 1);
+    strncpy(gNetApIP,  apIP  ? apIP  : "", sizeof(gNetApIP)  - 1);
+}
+
 // ── Backlight LEDC ───────────────────────────────────────────────
 void Display_SetBrightness(uint8_t val)
 {
@@ -286,13 +296,68 @@ static void drawSessionScreen(const GaugeData &d)
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Screen nav indicator (3 dots at top right of gauge screen)
+// SCREEN 3 — Network / OTA
+// ─────────────────────────────────────────────────────────────────
+static void drawNetScreen()
+{
+    tft.fillScreen(COL_BG);
+    tft.fillRect(0, 0, 160, 14, COL_HEADER);
+    tft.setTextColor(COL_WHITE, COL_HEADER);
+    tft.setTextDatum(TC_DATUM);
+    tft.setTextSize(1);
+    tft.drawString("NETWORK / OTA", 80, 3);
+
+    int y = 22;
+    tft.setTextDatum(TC_DATUM);
+    tft.setTextSize(1);
+
+    bool connected = strlen(gNetStaIP) > 0 && strcmp(gNetStaIP, "0.0.0.0") != 0;
+    if (connected) {
+        tft.setTextColor(COL_DIM, COL_BG);
+        tft.drawString("WiFi: SilverLining", 80, y);
+        y += 14;
+        // Show STA IP in larger text (size 2 = 12px/char)
+        tft.setTextColor(COL_WHITE, COL_BG);
+        tft.setTextSize(2);
+        tft.drawString(gNetStaIP, 80, y);
+        y += 22;
+        tft.setTextSize(1);
+    } else {
+        tft.setTextColor(MSG_WARN, COL_BG);
+        tft.drawString("WiFi not connected", 80, y);
+        y += 14;
+        tft.setTextColor(COL_DIM, COL_BG);
+    }
+
+    tft.setTextColor(COL_DIM, COL_BG);
+    char apLine[28];
+    snprintf(apLine, sizeof(apLine), "AP: %s", gNetApIP);
+    tft.drawString(apLine, 80, y);
+    y += 12;
+
+    tft.setTextColor(ARC_OUTER_TK, COL_BG);
+    tft.drawString("fuelstation.local/ota", 80, y);
+    y += 12;
+
+    tft.setTextColor(COL_DIM, COL_BG);
+    tft.drawString("Open in phone browser", 80, y);
+
+    // Footer
+    tft.fillRect(0, 120, 160, 8, COL_HEADER);
+    tft.setTextColor(COL_GREY, COL_HEADER);
+    tft.setTextDatum(TC_DATUM);
+    tft.drawString("PRESS=back to gauge", 80, 121);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Screen nav indicator (4 dots at top right)
 // ─────────────────────────────────────────────────────────────────
 static void drawNavDots(DisplayScreen s)
 {
+    // 4 dots: shift left by 5px so last dot stays at x=158
     for (int i = 0; i < (int)SCREEN_COUNT; i++) {
         uint16_t col = (i == (int)s) ? 0x07FF : COL_HEADER;
-        tft.fillCircle(148 + i * 5, 7, 2, col);
+        tft.fillCircle(143 + i * 5, 7, 2, col);
     }
 }
 
@@ -304,9 +369,10 @@ void Display_Update(const GaugeData &data)
     if (needsFullRedraw) {
         needsFullRedraw = false;
         switch (currentScreen) {
-            case SCREEN_GAUGE:   drawGaugeFull(data); drawNavDots(currentScreen); break;
-            case SCREEN_HELI:    drawHeliScreen();    drawNavDots(currentScreen); break;
-            case SCREEN_SESSION: drawSessionScreen(data); drawNavDots(currentScreen); break;
+            case SCREEN_GAUGE:   drawGaugeFull(data);      drawNavDots(currentScreen); break;
+            case SCREEN_HELI:    drawHeliScreen();         drawNavDots(currentScreen); break;
+            case SCREEN_SESSION: drawSessionScreen(data);  drawNavDots(currentScreen); break;
+            case SCREEN_NET:     drawNetScreen();          drawNavDots(currentScreen); break;
             default: break;
         }
         return;

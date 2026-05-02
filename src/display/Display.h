@@ -39,7 +39,8 @@ enum DisplayScreen {
     SCREEN_GAUGE   = 0,
     SCREEN_HELI    = 1,
     SCREEN_SESSION = 2,
-    SCREEN_COUNT   = 3
+    SCREEN_NET     = 3,
+    SCREEN_COUNT   = 4
 };
 
 // ── Gauge data fed from main loop ────────────────────────────────
@@ -69,3 +70,4 @@ void Display_SetBrightness(uint8_t val);      // 0-255
 void Display_EncoderScroll(int delta);        // +1/-1 for heli select
 void Display_EncoderPress();                  // confirm heli selection
 int  Display_SelectedHeliIndex();
+void Display_SetNetworkIP(const char* staIP, const char* apIP);

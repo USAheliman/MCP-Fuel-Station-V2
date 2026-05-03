@@ -57,7 +57,7 @@ uint32_t purgeStartMs          = 0;
 // ── Low battery latch ─────────────────────────────────────────────
 float cutoffVPerCell   = 3.82f;
 bool  lowBatteryLatched = false;
-#define SAG_TRIP_COUNT    2
+#define SAG_TRIP_COUNT    6      // 6 × 500 ms = 3 s sustained low voltage
 #define SAG_HYST_PER_CELL 0.05f
 static uint8_t lowBattCount = 0;
 
@@ -94,6 +94,11 @@ bool     fillCalActive    = false;
 bool     drainCalActive   = false;
 uint32_t fillCalStartMs   = 0;
 uint32_t drainCalStartMs  = 0;
+static uint32_t fillCalSnapshot  = 0;
+static uint32_t drainCalSnapshot = 0;
+
+// ── Web command state ─────────────────────────────────────────────
+static int pendingWebCmd = 0;
 
 // ── Station config save/load ──────────────────────────────────────
 void SaveStationToFS()
@@ -153,14 +158,278 @@ void LoadStationFromFS()
 }
 
 // ── Forward declarations ──────────────────────────────────────────
-void BeginOverflowPurge();
+void BeginFill();
 void BeginDrain();
+void StopFill();
+void BeginOverflowPurge();
+
+// ── JSON string escape helper ─────────────────────────────────────
+static String jStr(const char* s)
+{
+    String r = "\"";
+    for (const char* p = s; *p; ++p) {
+        if (*p == '"' || *p == '\\') r += '\\';
+        r += *p;
+    }
+    return r + "\"";
+}
+
+// ── Message colour → CSS class ────────────────────────────────────
+static const char* msgColorClass(uint16_t c)
+{
+    if (c == MSG_FILLING)  return "green";
+    if (c == MSG_DRAINING) return "orange";
+    if (c == MSG_WARN)     return "flash";
+    if (c == MSG_COMPLETE) return "white";
+    return "cyan";
+}
+
+// ── Build full WebSocket state JSON ──────────────────────────────
+static String BuildWebStateJson()
+{
+    HeliModel& m    = heliModels[activeModelIndex];
+    float packV     = Sensors_BattVoltage();
+    int   cells     = max(1, cellCount);
+    float cellV     = packV / (float)cells;
+    int   supPct    = supplyTankCapacityMl > 0
+                      ? constrain((int)(100.0f * supplyTankRemainingMl / supplyTankCapacityMl), 0, 100) : 0;
+    bool  supLow    = supplyTankRemainingMl < supplyLowThresholdMl;
+    int   fillPct   = m.tankVolumeMl > 0
+                      ? constrain((int)(100.0f * lastFillVolumeMl  / m.tankVolumeMl), 0, 100) : 0;
+    int   drainPct  = m.tankVolumeMl > 0
+                      ? constrain((int)(100.0f * lastDrainVolumeMl / m.tankVolumeMl), 0, 100) : 0;
+
+    bool isDraining = drainClosedLoopActive || autoFillSequence == AF_PURGING;
+    int  fillFlow   = (!isDraining && closedLoopActive) ? gDisplay.flowMlMin : 0;
+    int  drainFlow  = isDraining ? gDisplay.flowMlMin : 0;
+
+    int page = lowBatteryLatched ? 4
+             : (PumpEnabled && closedLoopActive)      ? 2
+             : (PumpEnabled && drainClosedLoopActive) ? 3 : 1;
+
+    noInterrupts();
+    uint32_t fp = fillPulses, dp = drainPulses;
+    interrupts();
+
+    String j = "{";
+    j += "\"version\":"      + jStr(FW_VERSION) + ",";
+    j += "\"page\":"         + String(page)     + ",";
+    j += "\"modelName\":"    + jStr(m.name)     + ",";
+    j += "\"tankVol\":"      + String(m.tankVolumeMl) + ",";
+    j += "\"sensor\":"       + jStr(m.hasTankSensor ? "YES" : "NO") + ",";
+    j += "\"fillSpd\":"      + String(m.fillSpeed)    + ",";
+    j += "\"drainSpd\":"     + String(m.drainSpeed)   + ",";
+    j += "\"supplyPct\":"    + String(supPct)          + ",";
+    j += "\"supplyLow\":"    + String(supLow ? "true" : "false") + ",";
+    j += "\"supplyMl\":"     + String(supplyTankRemainingMl) + ",";
+    j += "\"supplyCapMl\":"  + String(supplyTankCapacityMl)  + ",";
+    j += "\"battPct\":"      + String(gDisplay.battPct) + ",";
+    j += "\"battType\":"     + jStr((String(cells) + "S").c_str()) + ",";
+    j += "\"packV\":"        + String(packV, 2)  + ",";
+    j += "\"cellV\":"        + String(cellV, 2)  + ",";
+    j += "\"cellCount\":"    + String(cells)     + ",";
+    j += "\"fillFlow\":"     + String(fillFlow)  + ",";
+    j += "\"fillVol\":"      + String(lastFillVolumeMl)  + ",";
+    j += "\"fillTarget\":"   + String(targetFillMl)      + ",";
+    j += "\"fillPct\":"      + String(fillPct)           + ",";
+    j += "\"fillSpeedSlider\":" + String(closedLoopTargetMlMin > 0 ? closedLoopTargetMlMin : m.fillSpeed) + ",";
+    j += "\"drainFlow\":"    + String(drainFlow)         + ",";
+    j += "\"drainVol\":"     + String(lastDrainVolumeMl) + ",";
+    j += "\"drainPct\":"     + String(drainPct)          + ",";
+    j += "\"drainSpeedSlider\":" + String(drainClosedLoopTargetMlMin > 0 ? drainClosedLoopTargetMlMin : m.drainSpeed) + ",";
+    j += "\"pumpOn\":"       + String(PumpEnabled ? "true" : "false") + ",";
+    j += "\"message\":"      + jStr(gDisplay.message) + ",";
+    j += "\"msgColor\":"     + jStr(msgColorClass(gDisplay.msgColour)) + ",";
+    j += "\"lowBat\":"       + String(lowBatteryLatched ? "true" : "false") + ",";
+    j += "\"activeModel\":"  + String(activeModelIndex)  + ",";
+    j += "\"previewModel\":" + String(previewModelIndex) + ",";
+    j += "\"fillCalPulses\":"  + String(fillCalActive  ? fp : 0) + ",";
+    j += "\"drainCalPulses\":" + String(drainCalActive ? dp : 0) + ",";
+
+    // Models list
+    j += "\"models\":[";
+    for (int i = 0; i < numModels; i++) {
+        if (i > 0) j += ",";
+        j += "{\"name\":"        + jStr(heliModels[i].name) + ",";
+        j += "\"totalFills\":"   + String(heliModels[i].totalFills) + "}";
+    }
+    j += "],";
+
+    // Setup stats for active model
+    j += "\"setupStats\":{";
+    j += "\"purge\":"       + String(m.purgeSecs)   + ",";
+    j += "\"totalFills\":"  + String(m.totalFills)  + ",";
+    j += "\"totalDrains\":" + String(m.totalDrains) + ",";
+    j += "\"totalFillVol\":"  + String(m.totalFillMl  / 1000.0f, 1) + ",";
+    j += "\"totalDrainVol\":" + String(m.totalDrainMl / 1000.0f, 1) + ",";
+    j += "\"totalVol\":"      + String((m.totalFillMl + m.totalDrainMl) / 1000.0f, 1);
+    j += "},";
+
+    // Station-wide totals
+    uint32_t stFills = 0, stDrains = 0, stFillMl = 0, stDrainMl = 0;
+    for (int i = 0; i < numModels; i++) {
+        stFills   += heliModels[i].totalFills;
+        stDrains  += heliModels[i].totalDrains;
+        stFillMl  += heliModels[i].totalFillMl;
+        stDrainMl += heliModels[i].totalDrainMl;
+    }
+    j += "\"station\":{";
+    j += "\"cap\":"         + jStr((String(supplyTankCapacityMl  / 1000.0f, 1) + "L").c_str()) + ",";
+    j += "\"rem\":"         + jStr((String(supplyTankRemainingMl / 1000.0f, 1) + "L").c_str()) + ",";
+    j += "\"low\":"         + jStr((String(supplyLowThresholdMl  / 1000.0f, 1) + "L").c_str()) + ",";
+    j += "\"fillCal\":"     + jStr(String(fillPulsesPerLiter,  1).c_str()) + ",";
+    j += "\"drainCal\":"    + jStr(String(drainPulsesPerLiter, 1).c_str()) + ",";
+    j += "\"volume\":"      + jStr((String(supplyTankRemainingMl / 1000.0f, 1) + "L").c_str()) + ",";
+    j += "\"flowDrop\":"    + jStr((String(tankEmptyFlowDropPct) + "%").c_str()) + ",";
+    j += "\"emptyDelay\":"  + jStr((String((int)(tankEmptyMinRunMs / 1000)) + "s").c_str()) + ",";
+    j += "\"cutoff\":"      + jStr((String(cutoffVPerCell, 2) + "V").c_str()) + ",";
+    j += "\"totalFills\":"  + String(stFills)  + ",";
+    j += "\"totalDrains\":" + String(stDrains) + ",";
+    j += "\"fillVol\":"     + jStr((String(stFillMl  / 1000.0f, 1) + "L").c_str()) + ",";
+    j += "\"drainVol\":"    + jStr((String(stDrainMl / 1000.0f, 1) + "L").c_str()) + ",";
+    j += "\"netVol\":"      + jStr((String(stFillMl > stDrainMl ? (stFillMl - stDrainMl) / 1000.0f : 0.0f, 1) + "L").c_str()) + ",";
+    j += "\"capMl\":"       + String(supplyTankCapacityMl)  + ",";
+    j += "\"lowMl\":"       + String(supplyLowThresholdMl)  + ",";
+    j += "\"fillCalRaw\":"  + String((int)(fillPulsesPerLiter  * 10)) + ",";
+    j += "\"drainCalRaw\":" + String((int)(drainPulsesPerLiter * 10)) + ",";
+    j += "\"flowDropRaw\":" + String(tankEmptyFlowDropPct)  + ",";
+    j += "\"emptyDelayRaw\":" + String((int)(tankEmptyMinRunMs / 1000)) + ",";
+    j += "\"cutoffRaw\":"   + String((int)(cutoffVPerCell * 100));
+    j += "}";
+
+    j += "}";
+    return j;
+}
+
+// ── WebSocket command handler ─────────────────────────────────────
+void OnWebCommand(const String& raw)
+{
+    if (!raw.startsWith("CMD:")) return;
+    String body = raw.substring(4);
+
+    // CMD:1000:N — speed slider (fill or drain depending on active pump)
+    int colonPos = body.indexOf(':');
+    if (colonPos >= 0) {
+        int baseCmd = body.substring(0, colonPos).toInt();
+        int val     = body.substring(colonPos + 1).toInt();
+        if (baseCmd == 1000) {
+            val = constrain(val, 50, 3000);
+            if (drainClosedLoopActive) {
+                drainClosedLoopTargetMlMin = val;
+                heliModels[activeModelIndex].drainSpeed = val;
+            } else {
+                closedLoopTargetMlMin = val;
+                heliModels[activeModelIndex].fillSpeed = val;
+            }
+        } else if (baseCmd == 8020) {
+            if (val >= 0 && val < numModels) {
+                activeModelIndex = val;
+                HeliLib_SaveActiveIndex();
+                strncpy(gDisplay.heliName, heliModels[activeModelIndex].name, sizeof(gDisplay.heliName) - 1);
+            }
+        }
+        return;
+    }
+
+    int cmd = body.toInt();
+
+    // Two-step: apply value to previously received parameter command
+    if (pendingWebCmd != 0) {
+        int pCmd = pendingWebCmd;
+        pendingWebCmd = 0;
+        switch (pCmd) {
+            case 7010: supplyTankCapacityMl  = max(100, cmd); SaveStationToFS(); break;
+            case 7012: supplyLowThresholdMl  = max(0,   cmd); SaveStationToFS(); break;
+            case 7013: tankEmptyFlowDropPct  = constrain(cmd, 5, 90); SaveStationToFS(); break;
+            case 7014: tankEmptyMinRunMs = (uint32_t)constrain(cmd, 1, 60) * 1000; SaveStationToFS(); break;
+            case 7016: cutoffVPerCell = constrain(cmd / 100.0f, 3.0f, 4.2f); SaveStationToFS(); break;
+            case 7020: fillPulsesPerLiter  = max(1.0f, cmd / 10.0f); SaveStationToFS(); break;
+            case 7021: drainPulsesPerLiter = max(1.0f, cmd / 10.0f); SaveStationToFS(); break;
+            case 7032:
+                if (cmd > 0 && fillCalSnapshot > 0)
+                    fillPulsesPerLiter = (float)fillCalSnapshot / (float)cmd * 1000.0f;
+                fillCalActive = false;
+                SaveStationToFS();
+                Serial.printf("Fill cal: %.1f ppl\n", fillPulsesPerLiter);
+                break;
+            case 7035:
+                if (cmd > 0 && drainCalSnapshot > 0)
+                    drainPulsesPerLiter = (float)drainCalSnapshot / (float)cmd * 1000.0f;
+                drainCalActive = false;
+                SaveStationToFS();
+                Serial.printf("Drain cal: %.1f ppl\n", drainPulsesPerLiter);
+                break;
+            case 6001: heliModels[activeModelIndex].tankVolumeMl = max(100, cmd); HeliLib_Save(activeModelIndex); break;
+            case 6002: heliModels[activeModelIndex].fillSpeed    = constrain(cmd, 50, 3000); HeliLib_Save(activeModelIndex); break;
+            case 6003: heliModels[activeModelIndex].hasTankSensor = (cmd != 0); HeliLib_Save(activeModelIndex); break;
+            case 6004: heliModels[activeModelIndex].purgeSecs    = constrain(cmd, 0, 30); HeliLib_Save(activeModelIndex); break;
+            case 6005: heliModels[activeModelIndex].drainSpeed   = constrain(cmd, 50, 3000); HeliLib_Save(activeModelIndex); break;
+            case 8020:
+                if (cmd >= 0 && cmd < numModels) {
+                    activeModelIndex = cmd;
+                    HeliLib_SaveActiveIndex();
+                    strncpy(gDisplay.heliName, heliModels[activeModelIndex].name, sizeof(gDisplay.heliName) - 1);
+                }
+                break;
+        }
+        return;
+    }
+
+    // Single-step commands
+    switch (cmd) {
+        case 1:  break;  // main→fill navigation, no hardware action
+        case 11: BeginFill();  break;
+        case 2:  break;  // main→drain navigation, no hardware action
+        case 12: BeginDrain(); break;
+        case 3:  StopFill();   break;
+        case 7011: supplyTankRemainingMl = supplyTankCapacityMl; SaveStationToFS(); break;
+        case 7018: lowBatteryLatched = false; lowBattCount = 0; SetMessage("Batt latch cleared", MSG_IDLE); break;
+        case 7030:
+            noInterrupts(); fillPulses = 0; interrupts();
+            fillCalSnapshot = 0;
+            fillCalActive   = true;
+            fillCalStartMs  = millis();
+            BeginFill();
+            break;
+        case 7031:
+            noInterrupts(); fillCalSnapshot = fillPulses; interrupts();
+            fillCalActive = false;
+            StopFill();
+            break;
+        case 7032: pendingWebCmd = 7032; break;
+        case 7033:
+            noInterrupts(); drainPulses = 0; interrupts();
+            drainCalSnapshot = 0;
+            drainCalActive   = true;
+            drainCalStartMs  = millis();
+            BeginDrain();
+            break;
+        case 7034:
+            noInterrupts(); drainCalSnapshot = drainPulses; interrupts();
+            drainCalActive = false;
+            StopFill();
+            break;
+        case 7035: pendingWebCmd = 7035; break;
+        // Two-step station / model param commands:
+        case 7010: case 7012: case 7013: case 7014: case 7016:
+        case 7020: case 7021:
+        case 6001: case 6002: case 6003: case 6004: case 6005:
+        case 8020:
+            pendingWebCmd = cmd; break;
+        // UI navigation only — no hardware action:
+        case 4000: case 4020: case 4030: break;
+    }
+}
 
 // ── Fill / Drain session begin ────────────────────────────────────
 void BeginFill()
 {
     if (lowBatteryLatched) return;
-    if (heliModels[activeModelIndex].hasTankSensor && Sensors_IsTankFull()) return;
+    if (!fillCalActive && heliModels[activeModelIndex].hasTankSensor && !Sensors_IsTankSensorFitted()) {
+        SetMessage("Connect Tank Full Sensor", MSG_WARN);
+        return;
+    }
+    if (!fillCalActive && heliModels[activeModelIndex].hasTankSensor && Sensors_IsTankFull()) return;
 
     noInterrupts(); fillPulses = 0; interrupts();
     lastFillVolumeMl       = 0;
@@ -246,12 +515,12 @@ static void UpdateFillFlow(uint32_t now)
         ? constrain((int)(100.0f * closedLoopCurrentPwm / MAX_PWM), 0, 100) : 0;
     gDisplay.pressurePct  = constrain((int)(Sensors_PressureBar() / 4.0f * 100.0f), 0, 100);
 
-    // Auto-stop conditions
-    if (PumpEnabled && autoFillSequence != AF_PURGING) {
+    // Auto-stop conditions — all bypassed during calibration
+    if (PumpEnabled && autoFillSequence != AF_PURGING && !fillCalActive) {
         if (targetFillMl > 0 && lastFillVolumeMl >= targetFillMl) {
             Pump_Stop(); BeginOverflowPurge(); return;
         }
-        if (heliModels[activeModelIndex].hasTankSensor && Sensors_IsTankFull()) {
+        if (heliModels[activeModelIndex].hasTankSensor && Sensors_IsTankSensorFitted() && Sensors_IsTankFull()) {
             Pump_Stop(); BeginOverflowPurge(); return;
         }
     }
@@ -321,7 +590,8 @@ static void UpdateDrainFlow(uint32_t now)
     }
     bool gated = !drainClosedLoopActive || drainClosedLoopHasSettled
                  || (drainClosedLoopCurrentPwm >= (int)(MAX_PWM * 0.5f));
-    if (PumpEnabled && (millis() - drainStartMs) >= tankEmptyMinRunMs && gated) {
+    // Tank empty auto-stop bypassed during calibration
+    if (!drainCalActive && PumpEnabled && (millis() - drainStartMs) >= tankEmptyMinRunMs && gated) {
         if (drainPeakFlowMlMin < TANK_EMPTY_MIN_PEAK_FLOW) {
             Pump_Stop();
             heliModels[activeModelIndex].totalDrains++;
@@ -385,6 +655,7 @@ static void UpdateAutoSequence(uint32_t now)
 static void UpdateBattery()
 {
     static uint32_t lastMs = 0;
+    if (millis() < 5000) return;          // skip first 5 s — ADC not settled
     if (millis() - lastMs < 500) return;
     lastMs = millis();
 
@@ -485,6 +756,7 @@ void setup()
     Display_Init();
     Power_Init(OnShortPress, OnShutdown);
     WebServer_Init();
+    WebServer_SetCommandHandler(OnWebCommand);
 
     // Push network IPs to display (shown on SCREEN_NET, screen 3)
     {
@@ -559,44 +831,7 @@ void loop()
     static uint32_t lastWsMs = 0;
     if (now - lastWsMs >= 250) {
         lastWsMs = now;
-        // Build state JSON (same structure as V1 BroadcastStateToESP32)
-        char json[512];
-        HeliModel &m = heliModels[activeModelIndex];
-        int supplyPct = supplyTankCapacityMl > 0
-            ? (int)(100.0f * supplyTankRemainingMl / supplyTankCapacityMl) : 0;
-        snprintf(json, sizeof(json),
-            "{"
-            "\"version\":\"%s\","
-            "\"modelName\":\"%s\","
-            "\"tankVol\":%d,"
-            "\"sensor\":\"%s\","
-            "\"supplyPct\":%d,"
-            "\"supplyMl\":%d,"
-            "\"fillFlow\":%d,"
-            "\"fillVol\":%d,"
-            "\"fillTarget\":%d,"
-            "\"pumpOn\":%s,"
-            "\"battPct\":%d,"
-            "\"pressureBar\":\"%.2f\","
-            "\"message\":\"%s\","
-            "\"activeModel\":%d"
-            "}",
-            FW_VERSION,
-            m.name,
-            m.tankVolumeMl,
-            m.hasTankSensor ? "YES" : "NO",
-            supplyPct,
-            supplyTankRemainingMl,
-            gDisplay.flowMlMin,
-            lastFillVolumeMl,
-            targetFillMl,
-            PumpEnabled ? "true" : "false",
-            gDisplay.battPct,
-            Sensors_PressureBar(),
-            gDisplay.message,
-            activeModelIndex
-        );
-        WebServer_BroadcastState(String(json));
+        WebServer_BroadcastState(BuildWebStateJson());
     }
 
     WebServer_Update();

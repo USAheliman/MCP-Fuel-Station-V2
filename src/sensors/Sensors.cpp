@@ -48,6 +48,7 @@ int Sensors_LiPoPct(float vPerCell)
 void Sensors_DetectCellCount(float packV)
 {
     if (cellCount != 0) return;
+    if (packV < 4.0f) return;  // ADC not settled yet — wait for valid reading
     if      (packV >= 9.0f)  cellCount = 3;
     else if (packV >= 6.0f)  cellCount = 2;
     else                     cellCount = 1;

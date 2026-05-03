@@ -27,3 +27,4 @@ void WebServer_Init();
 void WebServer_Update();                        // call every loop
 void WebServer_BroadcastState(const String &json);
 String WebServer_GetLocalIP();
+void WebServer_SetCommandHandler(void (*fn)(const String &cmd));

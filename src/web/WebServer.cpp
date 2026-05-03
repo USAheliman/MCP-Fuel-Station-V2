@@ -18,6 +18,9 @@
 static WebServer        httpServer(80);
 static WebSocketsServer wsServer(81);
 static String           lastJsonState = "{}";
+static void           (*sCmdHandler)(const String&) = nullptr;
+
+void WebServer_SetCommandHandler(void (*fn)(const String& cmd)) { sCmdHandler = fn; }
 
 // ── OTA state ─────────────────────────────────────────────────────
 #define OTA_DIR "/ota"
@@ -429,9 +432,16 @@ static void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t 
     if (type == WStype_CONNECTED) {
         if (lastJsonState.length() > 2)
             wsServer.sendTXT(num, lastJsonState.c_str());
+        char netJson[72];
+        if (WiFi.status() == WL_CONNECTED)
+            snprintf(netJson, sizeof(netJson), "{\"homeIP\":\"%s\"}", WiFi.localIP().toString().c_str());
+        else
+            strncpy(netJson, "{\"homeIP\":\"\"}", sizeof(netJson));
+        wsServer.sendTXT(num, netJson);
     } else if (type == WStype_TEXT) {
         String cmd = String((char*)payload).substring(0, length);
         Serial.printf("WS cmd: %s\n", cmd.c_str());
+        if (sCmdHandler) sCmdHandler(cmd);
     }
 }
 
@@ -512,6 +522,8 @@ static void handleRoot()
 {
     if (LittleFS.exists("/index.html")) {
         File f = LittleFS.open("/index.html", "r");
+        httpServer.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        httpServer.sendHeader("Pragma", "no-cache");
         httpServer.streamFile(f, "text/html");
         f.close();
     } else {

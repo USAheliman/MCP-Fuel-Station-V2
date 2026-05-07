@@ -5,42 +5,60 @@
 
 // ═══════════════════════════════════════════════════════════════════
 // MCP Fuel Station V2 — Power Management
+//
+// FALLING-edge ISR records press timestamp with hardware precision so
+// presses that occur during the ~60ms Display_Update() block are never
+// missed.  Release detection and hold-duration logic stay in the main
+// loop where it is safe to call callbacks.
 // ═══════════════════════════════════════════════════════════════════
 
 static ShortPressCb gShortPressCb = nullptr;
+static BackPressCb  gBackPressCb  = nullptr;
 static ShutdownCb   gShutdownCb   = nullptr;
 
+// ── ISR state ─────────────────────────────────────────────────────
+static volatile uint32_t isrPressMs = 0;
+static volatile bool     isrHasFall = false;
+
+static void IRAM_ATTR OnBtnFall()
+{
+    uint32_t t = millis();
+    if (!isrHasFall || (t - isrPressMs) > BTN_DEBOUNCE_MS) {
+        isrPressMs = t;
+        isrHasFall = true;
+    }
+}
+
+// ── Main-loop state ───────────────────────────────────────────────
 static uint32_t btnPressMs    = 0;
 static bool     btnWasPressed = false;
+static bool     backPressFired = false;
 static bool     screenStandby = false;
 static uint32_t lastActivityMs = 0;
 static bool     shutdownPending = false;
 
-void Power_Init(ShortPressCb onShortPress, ShutdownCb onShutdown)
+void Power_Init(ShortPressCb onShortPress, BackPressCb onBackPress, ShutdownCb onShutdown)
 {
     gShortPressCb = onShortPress;
+    gBackPressCb  = onBackPress;
     gShutdownCb   = onShutdown;
 
-    // GPIO16: read encoder SW timing (Pololu A already pulled via diode)
     pinMode(PIN_POLOLU_A_GPIO, INPUT_PULLUP);
-    // GPIO17: Pololu OFF — keep LOW normally
     pinMode(PIN_POLOLU_OFF, OUTPUT);
     digitalWrite(PIN_POLOLU_OFF, LOW);
+
+    attachInterrupt(digitalPinToInterrupt(PIN_POLOLU_A_GPIO), OnBtnFall, FALLING);
 
     lastActivityMs = millis();
     Serial.println("Power: init OK");
 }
 
-void Power_UpdateActivity()
-{
-    lastActivityMs = millis();
-}
-
-bool Power_IsStandby() { return screenStandby; }
+void Power_UpdateActivity() { lastActivityMs = millis(); }
+bool Power_IsStandby()      { return screenStandby; }
 
 void Power_ExitStandby()
 {
-    screenStandby = false;
+    screenStandby  = false;
     Display_SetBrightness(200);
     lastActivityMs = millis();
 }
@@ -55,21 +73,13 @@ void Power_Shutdown()
 {
     shutdownPending = true;
     Pump_Stop();
-
     if (gShutdownCb) gShutdownCb();
-
     Display_SetBrightness(0);
-
-    // Wait for button release before pulsing OFF
     while (digitalRead(PIN_POLOLU_A_GPIO) == LOW) delay(10);
     delay(100);
-
-    // Pulse Pololu OFF pin HIGH → cuts power
     digitalWrite(PIN_POLOLU_OFF, HIGH);
     delay(200);
     digitalWrite(PIN_POLOLU_OFF, LOW);
-
-    // If USB powered, spin here
     while (true) delay(100);
 }
 
@@ -77,36 +87,55 @@ void Power_Update()
 {
     if (shutdownPending) return;
 
-    bool btnPressed = (digitalRead(PIN_POLOLU_A_GPIO) == LOW);
-    uint32_t now   = millis();
+    uint32_t now     = millis();
+    bool     btnHeld = (digitalRead(PIN_POLOLU_A_GPIO) == LOW);
 
-    if (btnPressed && !btnWasPressed) {
-        if (btnPressMs == 0) btnPressMs = now;
-        if ((now - btnPressMs) >= BTN_DEBOUNCE_MS) btnWasPressed = true;
+    // Consume ISR press timestamp
+    if (isrHasFall && !btnWasPressed) {
+        noInterrupts();
+        btnPressMs = isrPressMs;
+        isrHasFall = false;
+        interrupts();
+        btnWasPressed  = true;
+        backPressFired = false;
     }
-    else if (btnPressed && btnWasPressed) {
-        if ((now - btnPressMs) >= BTN_LONG_PRESS_MS) Power_Shutdown();
-    }
-    else if (!btnPressed && btnWasPressed) {
-        uint32_t dur = now - btnPressMs;
-        btnWasPressed = false;
-        btnPressMs    = 0;
-        if (dur >= BTN_SHORT_PRESS_MS) {
-            Power_UpdateActivity();
-            if (screenStandby) Power_ExitStandby();
-            else if (gShortPressCb) gShortPressCb();
+
+    if (btnWasPressed) {
+        uint32_t held = now - btnPressMs;
+
+        if (!btnHeld) {
+            // Released
+            bool wasMed   = backPressFired;
+            btnWasPressed  = false;
+            btnPressMs     = 0;
+            backPressFired = false;
+            if (!wasMed && held >= BTN_SHORT_PRESS_MS) {
+                Power_UpdateActivity();
+                if (screenStandby) Power_ExitStandby();
+                else if (gShortPressCb) gShortPressCb();
+            }
+        } else {
+            if (held >= BTN_LONG_PRESS_MS) {
+                Power_Shutdown();
+            } else if (held >= BTN_BACK_PRESS_MS && !backPressFired) {
+                backPressFired = true;
+                Power_UpdateActivity();
+                if (!screenStandby && gBackPressCb) gBackPressCb();
+            }
         }
     }
-    else {
-        btnPressMs = 0;
-    }
 
-    // Screen standby / auto shutdown
+    // Standby / auto-shutdown
+    // Refresh 'now' — callbacks above (e.g. StopFill + SaveStationToFS) can take
+    // hundreds of ms and call Power_UpdateActivity(), leaving lastActivityMs > stale
+    // 'now'.  Unsigned subtraction then wraps to ~4 billion, firing EnterStandby
+    // immediately and making the screen appear to shut off on a normal press.
+    now = millis();
     if (!PumpEnabled) {
         uint32_t idle = now - lastActivityMs;
         if (!screenStandby && idle >= SCREEN_STANDBY_MS) EnterStandby();
         if (idle >= AUTO_SHUTDOWN_MS) Power_Shutdown();
     } else {
-        Power_UpdateActivity();  // keep alive while pumping
+        Power_UpdateActivity();
     }
 }

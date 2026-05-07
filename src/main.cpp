@@ -700,16 +700,71 @@ static void encoderPoll()
 
     lastScrollMs = now;
     Power_UpdateActivity();
-    Display_EncoderScroll(acc > 0 ? 1 : -1);
+
+    if (PumpEnabled) {
+        // During fill/drain: encoder adjusts pump speed in 50 ml/min steps
+        const int step = 50;
+        if (closedLoopActive) {
+            closedLoopTargetMlMin = constrain(closedLoopTargetMlMin + (acc > 0 ? step : -step), 50, 3000);
+            heliModels[activeModelIndex].fillSpeed = closedLoopTargetMlMin;
+            char buf[32]; snprintf(buf, sizeof(buf), "Speed: %d ml/min", closedLoopTargetMlMin);
+            SetMessage(buf, MSG_FILLING);
+        } else if (drainClosedLoopActive) {
+            drainClosedLoopTargetMlMin = constrain(drainClosedLoopTargetMlMin + (acc > 0 ? step : -step), 50, 3000);
+            heliModels[activeModelIndex].drainSpeed = drainClosedLoopTargetMlMin;
+            char buf[32]; snprintf(buf, sizeof(buf), "Speed: %d ml/min", drainClosedLoopTargetMlMin);
+            SetMessage(buf, MSG_DRAINING);
+        }
+    } else {
+        Display_EncoderScroll(acc > 0 ? 1 : -1);
+    }
     acc = 0;
 }
+
+static bool pendingModelSave = false;
 
 // ── Power button short press ──────────────────────────────────────
 void OnShortPress()
 {
-    // Cycle to next screen
-    DisplayScreen next = (DisplayScreen)(((int)Display_CurrentScreen() + 1) % SCREEN_COUNT);
-    Display_SetScreen(next);
+    if (PumpEnabled) {
+        StopFill();
+        Power_UpdateActivity();
+        return;
+    }
+
+    if (Display_CurrentScreen() == SCREEN_ACTION) {
+        int sel = Display_GetActionSel();
+        switch (sel) {
+            case ACTION_FILL:    BeginFill();  Display_SetScreen(SCREEN_GAUGE);   break;
+            case ACTION_DRAIN:   BeginDrain(); Display_SetScreen(SCREEN_GAUGE);   break;
+            case ACTION_MODEL:   Display_SetScreen(SCREEN_HELI);                  break;
+            case ACTION_SESSION: Display_SetScreen(SCREEN_SESSION);               break;
+            case ACTION_NETWORK: Display_SetScreen(SCREEN_NET);                   break;
+        }
+    } else if (Display_CurrentScreen() == SCREEN_HELI) {
+        Display_EncoderPress();
+        strncpy(gDisplay.heliName, heliModels[activeModelIndex].name,
+                sizeof(gDisplay.heliName) - 1);
+        SetMessage(heliModels[activeModelIndex].name, MSG_IDLE);
+        pendingModelSave = true;
+    } else if (Display_CurrentScreen() == SCREEN_SESSION ||
+               Display_CurrentScreen() == SCREEN_NET) {
+        Display_SetScreen(SCREEN_GAUGE);
+    } else {
+        Display_SetScreen(SCREEN_ACTION);
+    }
+    Power_UpdateActivity();
+}
+
+// ── Power button back (1.5s hold) ────────────────────────────────
+void OnBackPress()
+{
+    if (PumpEnabled) {
+        StopFill();
+        Power_UpdateActivity();
+        return;
+    }
+    Display_SetScreen(SCREEN_GAUGE);
     Power_UpdateActivity();
 }
 
@@ -754,7 +809,7 @@ void setup()
     Sensors_Init();
     Pump_Init();
     Display_Init();
-    Power_Init(OnShortPress, OnShutdown);
+    Power_Init(OnShortPress, OnBackPress, OnShutdown);
     WebServer_Init();
     WebServer_SetCommandHandler(OnWebCommand);
 
@@ -779,7 +834,9 @@ void setup()
 
     strncpy(gDisplay.heliName, heliModels[activeModelIndex].name,
             sizeof(gDisplay.heliName) - 1);
-    gDisplay.battPct = Sensors_BattPct();
+    gDisplay.battPct      = Sensors_BattPct();
+    gDisplay.outerTankPct = supplyTankCapacityMl > 0
+        ? constrain((int)(100.0f * supplyTankRemainingMl / supplyTankCapacityMl), 0, 100) : 0;
 
     Display_SetScreen(SCREEN_GAUGE);
     Serial.println("Setup complete — entering loop");
@@ -805,6 +862,11 @@ void loop()
     UpdateAutoSequence(now);
     UpdateBattery();
     Power_Update();
+
+    if (pendingModelSave) {
+        pendingModelSave = false;
+        HeliLib_SaveActiveIndex();
+    }
 
     // Update display data from active model
     strncpy(gDisplay.heliName, heliModels[activeModelIndex].name,

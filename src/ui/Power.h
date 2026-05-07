@@ -3,24 +3,24 @@
 
 // ═══════════════════════════════════════════════════════════════════
 // MCP Fuel Station V2 — Power Management
-// Pololu SV Mini power switch control via GPIO16/17
-// Encoder SW doubles as power button (OR gate → Pololu A pin)
-// Short press: screen/function  Long press 3s+: shutdown
+// Short press: menu/action  Hold 1.5s: back  Hold 5s: shutdown
+// FALLING-edge ISR captures press even during ~60ms display refresh
 // ═══════════════════════════════════════════════════════════════════
 
-#define BTN_DEBOUNCE_MS     50
-#define BTN_LONG_PRESS_MS 3000
-#define BTN_SHORT_PRESS_MS   80
-#define SCREEN_STANDBY_MS  600000UL   // 10 min
-#define AUTO_SHUTDOWN_MS   900000UL   // 15 min
+#define BTN_DEBOUNCE_MS    50
+#define BTN_SHORT_PRESS_MS 30
+#define BTN_BACK_PRESS_MS  1500
+#define BTN_LONG_PRESS_MS  8000
+#define SCREEN_STANDBY_MS  600000UL
+#define AUTO_SHUTDOWN_MS   900000UL
 
-// Callback types
 typedef void (*ShortPressCb)();
+typedef void (*BackPressCb)();
 typedef void (*ShutdownCb)();
 
-void Power_Init(ShortPressCb onShortPress, ShutdownCb onShutdown);
-void Power_Update();              // call every loop
-void Power_Shutdown();            // save + cut power
-void Power_UpdateActivity();      // reset idle timer
+void Power_Init(ShortPressCb onShortPress, BackPressCb onBackPress, ShutdownCb onShutdown);
+void Power_Update();
+void Power_Shutdown();
+void Power_UpdateActivity();
 bool Power_IsStandby();
 void Power_ExitStandby();

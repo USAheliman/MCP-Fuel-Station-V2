@@ -63,5 +63,11 @@
 // GPIO35-37 — PSRAM
 // GPIO45/46 — strapping pins
 
+// ── Touch screen GT911 (I2C) ─────────────────────────────────────────
+#define PIN_TP_SDA   34
+#define PIN_TP_SCL   41
+#define PIN_TP_INT   42
+#define PIN_TP_RST   47
+
 // ── Spare ─────────────────────────────────────────────────────────────
-// GPIO34, GPIO38, GPIO41, GPIO42, GPIO47
+// GPIO38

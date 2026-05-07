@@ -733,6 +733,7 @@ void OnShortPress()
     }
 
     if (Display_CurrentScreen() == SCREEN_ACTION) {
+        if (Display_GetScreenAge() < 500) { Power_UpdateActivity(); return; }
         int sel = Display_GetActionSel();
         switch (sel) {
             case ACTION_FILL:    BeginFill();  Display_SetScreen(SCREEN_GAUGE);   break;
@@ -798,7 +799,9 @@ static void BuzzerStartup()
 void setup()
 {
     Serial.begin(115200);
-    delay(300);
+    // Wait up to 3 s for USB CDC to enumerate so boot messages are visible
+    { uint32_t t0 = millis(); while (!Serial && millis() - t0 < 3000) yield(); }
+    delay(100);
     Serial.printf("\nMCP Fuel Station V2  %s  %s %s\n",
                   FW_VERSION, FW_BUILD_DATE, FW_BUILD_TIME);
 
@@ -874,12 +877,15 @@ void loop()
     gDisplay.pumpRunning  = PumpEnabled;
     gDisplay.sensorFitted = Sensors_IsTankSensorFitted();
     gDisplay.tankFull     = Sensors_IsTankFull();
+    gDisplay.supplyMl     = supplyTankRemainingMl;
+    gDisplay.supplyCapMl  = supplyTankCapacityMl;
+    gDisplay.supplyLowMl  = supplyLowThresholdMl;
 
     // Clear startup IP message after 6 s; then show normal idle text
     static bool ipMsgCleared = false;
     if (!ipMsgCleared && now >= 6000) {
         ipMsgCleared = true;
-        SetMessage("MCP Fuel Station V2", MSG_IDLE);
+        SetMessage("", MSG_IDLE);
     }
 
     // Refresh TFT at ~10Hz

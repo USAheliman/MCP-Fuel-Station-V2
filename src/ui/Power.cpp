@@ -1,6 +1,6 @@
 #include "Power.h"
 #include "../../include/pins.h"
-#include "../display/Display.h"
+#include "../screen/Screen.h"
 #include "../pump/Pump.h"
 
 // ═══════════════════════════════════════════════════════════════════
@@ -59,14 +59,14 @@ bool Power_IsStandby()      { return screenStandby; }
 void Power_ExitStandby()
 {
     screenStandby  = false;
-    Display_SetBrightness(200);
+    Screen_SetBrightness(200);
     lastActivityMs = millis();
 }
 
 static void EnterStandby()
 {
     screenStandby = true;
-    Display_SetBrightness(8);
+    Screen_SetBrightness(8);
 }
 
 void Power_Shutdown()
@@ -74,7 +74,7 @@ void Power_Shutdown()
     shutdownPending = true;
     Pump_Stop();
     if (gShutdownCb) gShutdownCb();
-    Display_SetBrightness(0);
+    Screen_SetBrightness(0);
     while (digitalRead(PIN_POLOLU_A_GPIO) == LOW) delay(10);
     delay(100);
     digitalWrite(PIN_POLOLU_OFF, HIGH);

@@ -10,14 +10,14 @@
 #include "heli/HeliLib.h"
 #include "sensors/Sensors.h"
 #include "pump/Pump.h"
-#include "display/Display.h"
+#include "screen/Screen.h"
+#include "rtc/RTC.h"
 #include "ui/Power.h"
 #include "web/WebServer.h"
 
 // ═══════════════════════════════════════════════════════════════════
 // MCP Fuel Station V2 — main.cpp
 // ESP32-S3 N16R8 — single board
-// All V1 Teensy logic ported here, Nextion replaced by TFT + encoder
 // ═══════════════════════════════════════════════════════════════════
 
 // ── Station config (ported from V1) ──────────────────────────────
@@ -61,8 +61,8 @@ bool  lowBatteryLatched = false;
 #define SAG_HYST_PER_CELL 0.05f
 static uint8_t lowBattCount = 0;
 
-// ── Display data ──────────────────────────────────────────────────
-static GaugeData gDisplay;
+// ── Screen data ───────────────────────────────────────────────────
+static ScreenData gDisplay;
 
 // ── Message helpers ───────────────────────────────────────────────
 static void SetMessage(const char* msg, uint16_t colour)
@@ -325,7 +325,7 @@ void OnWebCommand(const String& raw)
             if (val >= 0 && val < numModels) {
                 activeModelIndex = val;
                 HeliLib_SaveActiveIndex();
-                strncpy(gDisplay.heliName, heliModels[activeModelIndex].name, sizeof(gDisplay.heliName) - 1);
+                strncpy(gDisplay.modelName, heliModels[activeModelIndex].name, sizeof(gDisplay.modelName) - 1);
             }
         }
         return;
@@ -368,7 +368,7 @@ void OnWebCommand(const String& raw)
                 if (cmd >= 0 && cmd < numModels) {
                     activeModelIndex = cmd;
                     HeliLib_SaveActiveIndex();
-                    strncpy(gDisplay.heliName, heliModels[activeModelIndex].name, sizeof(gDisplay.heliName) - 1);
+                    strncpy(gDisplay.modelName, heliModels[activeModelIndex].name, sizeof(gDisplay.modelName) - 1);
                 }
                 break;
         }
@@ -536,6 +536,7 @@ void BeginOverflowPurge()
         HeliLib_Save(activeModelIndex);
         SetMessage("Complete", MSG_COMPLETE);
         autoFillSequence = AF_NONE;
+        Screen_SetScreen(SCREEN_HOME);
         return;
     }
     autoFillSequence = AF_PURGING;
@@ -598,6 +599,7 @@ static void UpdateDrainFlow(uint32_t now)
             heliModels[activeModelIndex].totalDrainMl += (uint32_t)lastDrainVolumeMl;
             HeliLib_Save(activeModelIndex);
             SetMessage("Tank was empty", MSG_WARN);
+            Screen_SetScreen(SCREEN_HOME);
             return;
         }
         int thresh = drainPeakFlowMlMin * (100 - tankEmptyFlowDropPct) / 100;
@@ -614,6 +616,7 @@ static void UpdateDrainFlow(uint32_t now)
                 } else {
                     SetMessage("Tank empty", MSG_COMPLETE);
                     autoFillSequence = AF_NONE;
+                    Screen_SetScreen(SCREEN_HOME);
                 }
             }
         } else tankEmptyCount = 0;
@@ -647,6 +650,7 @@ static void UpdateAutoSequence(uint32_t now)
             heliModels[activeModelIndex].totalFillMl += (uint32_t)lastFillVolumeMl;
             HeliLib_Save(activeModelIndex);
             SetMessage("Complete", MSG_COMPLETE);
+            Screen_SetScreen(SCREEN_HOME);
         }
     }
 }
@@ -716,7 +720,7 @@ static void encoderPoll()
             SetMessage(buf, MSG_DRAINING);
         }
     } else {
-        Display_EncoderScroll(acc > 0 ? 1 : -1);
+        Screen_EncoderScroll(acc > 0 ? 1 : -1);
     }
     acc = 0;
 }
@@ -724,40 +728,53 @@ static void encoderPoll()
 static bool pendingModelSave = false;
 
 // ── Power button short press ──────────────────────────────────────
+//
+// Button bounce on mechanical release produces a spurious second press
+// ~40ms after the real one.  A single timestamp guard at the very top
+// covers ALL scenarios — pump running, idle, screen switch — without
+// needing per-branch guards that could be bypassed.
 void OnShortPress()
 {
+    static uint32_t lastPressMs = 0;
+    uint32_t now = millis();
+    if (now - lastPressMs < 600) { Power_UpdateActivity(); return; }
+    lastPressMs = now;
+
     if (PumpEnabled) {
         StopFill();
         Power_UpdateActivity();
         return;
     }
 
-    if (Display_CurrentScreen() == SCREEN_ACTION) {
-        if (Display_GetScreenAge() < 500) { Power_UpdateActivity(); return; }
-        int sel = Display_GetActionSel();
-        switch (sel) {
-            case ACTION_FILL:    BeginFill();  Display_SetScreen(SCREEN_GAUGE);   break;
-            case ACTION_DRAIN:   BeginDrain(); Display_SetScreen(SCREEN_GAUGE);   break;
-            case ACTION_MODEL:   Display_SetScreen(SCREEN_HELI);                  break;
-            case ACTION_SESSION: Display_SetScreen(SCREEN_SESSION);               break;
-            case ACTION_NETWORK: Display_SetScreen(SCREEN_NET);                   break;
+    switch (Screen_CurrentScreen()) {
+        case SCREEN_HOME: {
+            int sel = Screen_GetActionSel();
+            switch (sel) {
+                case ACTION_FILL:  BeginFill();  break;
+                case ACTION_DRAIN: BeginDrain(); break;
+                case ACTION_MODEL: Screen_SetScreen(SCREEN_MODEL); break;
+                case ACTION_NET:   Screen_SetScreen(SCREEN_NET);   break;
+            }
+            break;
         }
-    } else if (Display_CurrentScreen() == SCREEN_HELI) {
-        Display_EncoderPress();
-        strncpy(gDisplay.heliName, heliModels[activeModelIndex].name,
-                sizeof(gDisplay.heliName) - 1);
-        SetMessage(heliModels[activeModelIndex].name, MSG_IDLE);
-        pendingModelSave = true;
-    } else if (Display_CurrentScreen() == SCREEN_SESSION ||
-               Display_CurrentScreen() == SCREEN_NET) {
-        Display_SetScreen(SCREEN_GAUGE);
-    } else {
-        Display_SetScreen(SCREEN_ACTION);
+        case SCREEN_MODEL:
+            Screen_EncoderPress();
+            strncpy(gDisplay.modelName, heliModels[activeModelIndex].name,
+                    sizeof(gDisplay.modelName) - 1);
+            SetMessage(heliModels[activeModelIndex].name, MSG_IDLE);
+            pendingModelSave = true;
+            break;
+        case SCREEN_NET:
+            Screen_SetScreen(SCREEN_HOME);
+            break;
+        default:
+            Screen_SetScreen(SCREEN_HOME);
+            break;
     }
     Power_UpdateActivity();
 }
 
-// ── Power button back (1.5s hold) ────────────────────────────────
+// ── Power button back (3s hold) ──────────────────────────────────
 void OnBackPress()
 {
     if (PumpEnabled) {
@@ -765,7 +782,7 @@ void OnBackPress()
         Power_UpdateActivity();
         return;
     }
-    Display_SetScreen(SCREEN_GAUGE);
+    Screen_SetScreen(SCREEN_HOME);
     Power_UpdateActivity();
 }
 
@@ -810,17 +827,18 @@ void setup()
     LoadStationFromFS();
 
     Sensors_Init();
+    RTC_Init();
     Pump_Init();
-    Display_Init();
+    Screen_Init();
     Power_Init(OnShortPress, OnBackPress, OnShutdown);
     WebServer_Init();
     WebServer_SetCommandHandler(OnWebCommand);
 
-    // Push network IPs to display (shown on SCREEN_NET, screen 3)
+    // Push network IPs to screen (shown on SCREEN_NET)
     {
         String staIP = WebServer_GetLocalIP();
         String apIP  = WiFi.softAPIP().toString();
-        Display_SetNetworkIP(staIP.c_str(), apIP.c_str());
+        Screen_SetNetworkIP(staIP.c_str(), apIP.c_str());
 
         // Show IP in the message bar for first 6 seconds after boot
         char ipMsg[40];
@@ -835,13 +853,13 @@ void setup()
 
     BuzzerStartup();
 
-    strncpy(gDisplay.heliName, heliModels[activeModelIndex].name,
-            sizeof(gDisplay.heliName) - 1);
+    strncpy(gDisplay.modelName, heliModels[activeModelIndex].name,
+            sizeof(gDisplay.modelName) - 1);
     gDisplay.battPct      = Sensors_BattPct();
     gDisplay.outerTankPct = supplyTankCapacityMl > 0
         ? constrain((int)(100.0f * supplyTankRemainingMl / supplyTankCapacityMl), 0, 100) : 0;
 
-    Display_SetScreen(SCREEN_GAUGE);
+    Screen_SetScreen(SCREEN_HOME);
     Serial.println("Setup complete — entering loop");
 }
 
@@ -872,14 +890,22 @@ void loop()
     }
 
     // Update display data from active model
-    strncpy(gDisplay.heliName, heliModels[activeModelIndex].name,
-            sizeof(gDisplay.heliName) - 1);
+    strncpy(gDisplay.modelName, heliModels[activeModelIndex].name,
+            sizeof(gDisplay.modelName) - 1);
     gDisplay.pumpRunning  = PumpEnabled;
     gDisplay.sensorFitted = Sensors_IsTankSensorFitted();
     gDisplay.tankFull     = Sensors_IsTankFull();
     gDisplay.supplyMl     = supplyTankRemainingMl;
     gDisplay.supplyCapMl  = supplyTankCapacityMl;
     gDisplay.supplyLowMl  = supplyLowThresholdMl;
+
+    // Zero pump-specific fields when idle so the display transitions cleanly
+    if (!PumpEnabled) {
+        gDisplay.pumpSpeedPct = 0;
+        gDisplay.flowMlMin    = 0;
+        gDisplay.mainTankPct  = 0;
+        gDisplay.volumeMl     = 0;
+    }
 
     // Clear startup IP message after 6 s; then show normal idle text
     static bool ipMsgCleared = false;
@@ -888,11 +914,11 @@ void loop()
         SetMessage("", MSG_IDLE);
     }
 
-    // Refresh TFT at ~10Hz
+    // Refresh screen at ~10Hz
     static uint32_t lastDisplayMs = 0;
     if (now - lastDisplayMs >= 100) {
         lastDisplayMs = now;
-        Display_Update(gDisplay);
+        Screen_Update(gDisplay);
     }
 
     // Broadcast WebSocket state at ~4Hz

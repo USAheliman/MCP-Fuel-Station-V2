@@ -239,8 +239,8 @@ static void renderHeader(const char* title)
     spr.setTextColor(C_WHITE, C_HDR);
     spr.drawString(title, SCR_W / 2, HDR_H / 2);
 
-    // Firmware version — right, size 1 green
-    spr.setTextSize(1);
+    // Firmware version — right, size 2 green (matches RTC)
+    spr.setTextSize(2);
     spr.setTextDatum(MR_DATUM);
     spr.setTextColor(C_GREEN, C_HDR);
     spr.drawString(FW_VERSION, SCR_W - 6, HDR_H / 2);

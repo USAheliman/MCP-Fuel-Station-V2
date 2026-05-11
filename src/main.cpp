@@ -165,6 +165,7 @@ void BeginFill();
 void BeginDrain();
 void StopFill();
 void BeginOverflowPurge();
+static void BuzzerShutdown();
 
 // ── JSON string escape helper ─────────────────────────────────────
 static String jStr(const char* s)
@@ -868,6 +869,7 @@ void OnBackPress()
 // ── Shutdown callback — save before power cut ─────────────────────
 void OnShutdown()
 {
+    BuzzerShutdown();
     Logger_Write(LOG_INFO, CAT_SYSTEM, "SHUTDOWN", nullptr,
                  (float)Sensors_BattVoltage());
     HeliLib_SaveAll();
@@ -875,20 +877,47 @@ void OnShutdown()
     Serial.println("Shutdown: saved all");
 }
 
-// ── Buzzer tones ──────────────────────────────────────────────────
-static void BuzzerTone(uint32_t freqHz, uint32_t durationMs)
+// ── Buzzer helpers ────────────────────────────────────────────────
+// Bit-bang approach: no LEDC involvement, no risk of timer crosstalk.
+// GPIO3 is toggled at the audio frequency using delayMicroseconds.
+static void BuzzerNote(uint32_t freqHz, uint32_t ms)
 {
-    ledcSetup(BUZZER_LEDC_CHANNEL, freqHz, 8);
-    ledcAttachPin(PIN_BUZZER, BUZZER_LEDC_CHANNEL);
-    ledcWrite(BUZZER_LEDC_CHANNEL, 128);
-    delay(durationMs);
-    ledcWrite(BUZZER_LEDC_CHANNEL, 0);
+    pinMode(PIN_BUZZER, OUTPUT);
+    uint32_t halfUs = 500000UL / freqHz;
+    uint32_t end    = millis() + ms;
+    while ((int32_t)(millis() - end) < 0) {
+        digitalWrite(PIN_BUZZER, HIGH);
+        delayMicroseconds(halfUs);
+        digitalWrite(PIN_BUZZER, LOW);
+        delayMicroseconds(halfUs);
+    }
+    digitalWrite(PIN_BUZZER, LOW);
 }
 
-static void BuzzerStartup()
+// Ascending 4-note fanfare — plays during splash (~1.2 s)
+static void BuzzerBoot()
 {
-    BuzzerTone(880, 80); delay(40);
-    BuzzerTone(1320, 120);
+    BuzzerNote(440,  180);   // A4
+    BuzzerNote(554,  180);   // C#5
+    BuzzerNote(659,  180);   // E5
+    BuzzerNote(880,  550);   // A5  (held)
+}
+
+// Short descending blip — going to sleep
+static void BuzzerStandby()
+{
+    BuzzerNote(660,  80);
+    BuzzerNote(440, 120);
+}
+
+// Descending farewell — powering off
+static void BuzzerShutdown()
+{
+    BuzzerNote(660, 150);
+    delay(50);
+    BuzzerNote(440, 150);
+    delay(50);
+    BuzzerNote(330, 350);
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -938,6 +967,7 @@ void setup()
 
     Screen_Init();
     Screen_ShowSplash();
+    BuzzerBoot();                   // plays ~1.2 s while splash is visible
     uint32_t splashMs = millis();   // hold splash for at least 2 s total
     Power_Init(OnShortPress, OnBackPress, OnShutdown);
     WebServer_Init();
@@ -955,8 +985,6 @@ void setup()
     encoder.attachHalfQuad(PIN_ENC_DT, PIN_ENC_CLK);
     encoder.setCount(0);
     lastEncPos = 0;
-
-    BuzzerStartup();
 
     strncpy(gDisplay.modelName, heliModels[activeModelIndex].name,
             sizeof(gDisplay.modelName) - 1);
@@ -1019,6 +1047,14 @@ void loop()
     UpdateAutoSequence(now);
     UpdateBattery();
     Power_Update();
+
+    // Detect standby entry and play audio cue
+    {
+        static bool prevStandby = false;
+        bool curStandby = Power_IsStandby();
+        if (curStandby && !prevStandby) BuzzerStandby();
+        prevStandby = curStandby;
+    }
 
     if (pendingModelSave) {
         pendingModelSave = false;

@@ -73,7 +73,7 @@ void Power_Shutdown()
 {
     shutdownPending = true;
     Pump_Stop();
-    if (gShutdownCb) gShutdownCb();
+    if (gShutdownCb) gShutdownCb();   // plays BuzzerShutdown + saves state
     Screen_SetBrightness(0);
     while (digitalRead(PIN_POLOLU_A_GPIO) == LOW) delay(10);
     delay(100);

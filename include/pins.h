@@ -25,8 +25,7 @@
 #define PIN_PUMP_LEN        10   // Left enable — hold HIGH
 
 // ── Audio ─────────────────────────────────────────────────────────────
-#define PIN_BUZZER           3   // Passive piezo — ledcWriteTone()
-#define BUZZER_LEDC_CHANNEL  0
+#define PIN_BUZZER           3   // Passive piezo — bit-bang GPIO toggle
 
 // ── Flow sensors (5V → 3.3V via 7.5k/15k divider) ───────────────────
 #define PIN_FILL_FLOW        4   // Fill flow sensor pulse

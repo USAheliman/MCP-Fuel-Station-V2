@@ -833,6 +833,7 @@ void setup()
     Power_Init(OnShortPress, OnBackPress, OnShutdown);
     WebServer_Init();
     WebServer_SetCommandHandler(OnWebCommand);
+    RTC_NTPSync();   // sync DS3231 from NTP while WiFi is fresh
 
     // Push network IPs to screen (shown on SCREEN_NET)
     {

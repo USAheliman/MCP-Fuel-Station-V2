@@ -7,6 +7,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 void     RTC_Init();
+void     RTC_NTPSync();   // call after WiFi connects — syncs DS3231 from NTP (≤2 s)
 bool     RTC_IsRunning();
 
 // Fills buf with "10 May 2026  14:32" — for logging / full timestamp

@@ -47,6 +47,7 @@ static TFT_eSprite spr(&tft);
 // Colour palette (RGB565)
 // ════════════════════════════════════════════════════════════════
 #define C_BG      0x0841   // dark navy background
+#define C_BLACK   0x0000   // pure black — left panel so photo blends seamlessly
 #define C_HDR     0x1082   // header / message bar background
 #define C_CARD    0x0422   // selected-row card fill
 #define C_SEP     0x2104   // separator lines and bar tracks
@@ -267,7 +268,7 @@ static void renderMsgBar(const ScreenData& d)
 // ════════════════════════════════════════════════════════════════
 static void renderLeftPanel(const ScreenData& d)
 {
-    spr.fillRect(0, CONTENT_Y, LEFT_W, CONTENT_H, C_BG);
+    spr.fillRect(0, CONTENT_Y, LEFT_W, CONTENT_H, C_BLACK);
     spr.drawFastVLine(SEP_X, CONTENT_Y, CONTENT_H, C_GREY);
 
     // Photo or initial-letter placeholder
@@ -294,7 +295,7 @@ static void renderLeftPanel(const ScreenData& d)
     const int nameY = PHOTO_Y + PHOTO_H + 8;   // y=172
     spr.setTextDatum(TC_DATUM);
     spr.setTextSize(2);
-    spr.setTextColor(C_WHITE, C_BG);
+    spr.setTextColor(C_WHITE, C_BLACK);
     spr.drawString(d.modelName, LEFT_W / 2, nameY);
 
     // Tank volume and sensor status
@@ -302,11 +303,11 @@ static void renderLeftPanel(const ScreenData& d)
         char buf[24];
         snprintf(buf, sizeof(buf), "%d ml", heliModels[activeModelIndex].tankVolumeMl);
         spr.setTextSize(2);
-        spr.setTextColor(C_YELLOW, C_BG);
+        spr.setTextColor(C_YELLOW, C_BLACK);
         spr.drawString(buf, LEFT_W / 2, nameY + 20);
 
         bool sns = heliModels[activeModelIndex].hasTankSensor;
-        spr.setTextColor(sns ? C_GREEN : C_ORANGE, C_BG);
+        spr.setTextColor(sns ? C_GREEN : C_ORANGE, C_BLACK);
         spr.drawString(sns ? "SENSOR: YES" : "SENSOR: NO", LEFT_W / 2, nameY + 40);
     }
 
@@ -329,7 +330,7 @@ static void renderLeftPanel(const ScreenData& d)
             spr.drawString("STOP", btnX1 + btnW / 2, btnY + btnH / 2);
             // BACK — dim
             spr.drawRoundRect(btnX2, btnY, btnW, btnH, 6, C_GREY);
-            spr.setTextColor(C_GREY, C_BG);
+            spr.setTextColor(C_GREY, C_BLACK);
             spr.drawString("BACK", btnX2 + btnW / 2, btnY + btnH / 2);
         } else {
             // START — highlighted if selected (gPumpBtnSel==0)
@@ -476,7 +477,7 @@ static void renderRightHome(const ScreenData& d)
 
 // ════════════════════════════════════════════════════════════════
 // Screen: MODEL BROWSER — full width, 3 visible rows
-// Each row 82 px: name (size 2) + specs (size 1) + stats (size 1)
+// Each row 82 px: name (size 2) @ y+8, specs (size 2) @ y+30, stats (size 2) @ y+52
 // ════════════════════════════════════════════════════════════════
 static void renderModelBrowser()
 {
@@ -519,27 +520,27 @@ static void renderModelBrowser()
             spr.drawString("ACTIVE", SCR_W - 8, y + 12);
         }
 
-        // Specs line
-        char line1[96];
-        snprintf(line1, sizeof(line1), "%d ml  Fill: %d/m  Drain: %d/m  Purge: %ds  Sensor: %s",
+        // Specs line — abbreviated to fit ~40 chars at size 2
+        char line1[64];
+        snprintf(line1, sizeof(line1), "%dml  F:%d  D:%d  Prg:%ds  Snsr:%s",
                  heliModels[idx].tankVolumeMl,
                  heliModels[idx].fillSpeed,
                  heliModels[idx].drainSpeed,
                  heliModels[idx].purgeSecs,
                  heliModels[idx].hasTankSensor ? "YES" : "NO");
-        spr.setTextSize(1);
+        spr.setTextSize(2);
         spr.setTextDatum(TL_DATUM);
         spr.setTextColor(sel ? C_ACCENT : C_GREY, bg);
-        spr.drawString(line1, 10, y + 34);
+        spr.drawString(line1, 10, y + 30);
 
         // Stats line
-        char line2[64];
-        snprintf(line2, sizeof(line2), "Fills: %u   Drains: %u   Total: %.1f L",
+        char line2[48];
+        snprintf(line2, sizeof(line2), "Fills:%u  Drains:%u  Vol:%.1fL",
                  heliModels[idx].totalFills,
                  heliModels[idx].totalDrains,
                  heliModels[idx].totalFillMl / 1000.0f);
         spr.setTextColor(sel ? C_WHITE : C_GREY, bg);
-        spr.drawString(line2, 10, y + 50);
+        spr.drawString(line2, 10, y + 52);
     }
 }
 
@@ -700,8 +701,8 @@ void Screen_Update(const ScreenData& data)
     switch (gCurScreen) {
         case SCREEN_HOME: {
             const char* title =
-                data.pumpRunning ? (data.msgColour == MSG_DRAINING ? "DRAINING" : "FILLING") :
-                gPostPump        ? (gPostIsDrain                   ? "DRAINING" : "FILLING") :
+                data.pumpRunning ? (data.msgColour == MSG_DRAINING ? "DRAIN MODE" : "FILL MODE") :
+                gPostPump        ? (gPostIsDrain                   ? "DRAIN MODE" : "FILL MODE") :
                 "HOME";
             renderHeader(title);
             renderLeftPanel(data);

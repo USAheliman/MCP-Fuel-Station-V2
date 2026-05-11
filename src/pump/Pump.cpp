@@ -101,8 +101,9 @@ void Pump_UpdateRamp()
     if (currentSpeedSigned == desired) return;
 
     int diff = desired - currentSpeedSigned;
-    if (diff > 0) currentSpeedSigned += min(RAMP_STEP, diff);
-    else          currentSpeedSigned -= min(RAMP_STEP, -diff);
+    int step = (abs(desired) > abs(currentSpeedSigned)) ? RAMP_STEP_UP : RAMP_STEP_DOWN;
+    if (diff > 0) currentSpeedSigned += min(step, diff);
+    else          currentSpeedSigned -= min(step, -diff);
 
     Pump_SetOutput(currentSpeedSigned);
 }

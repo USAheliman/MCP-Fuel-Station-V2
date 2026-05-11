@@ -587,6 +587,9 @@ static void UpdateDrainFlow(uint32_t now)
     supplyTankRemainingMl = constrain(supplyAtSessionStartMl + volumeMl, 0, supplyTankCapacityMl);
     gDisplay.outerTankPct = supplyTankCapacityMl > 0
         ? constrain((int)(100.0f * supplyTankRemainingMl / supplyTankCapacityMl), 0, 100) : 0;
+    gDisplay.pumpSpeedPct = MAX_PWM > MIN_PWM
+        ? constrain((int)(100.0f * drainClosedLoopCurrentPwm / MAX_PWM), 0, 100) : 0;
+    gDisplay.pressurePct  = constrain((int)(Sensors_PressureBar() / 4.0f * 100.0f), 0, 100);
 
     // Tank empty detection (ported from V1)
     if (PumpEnabled && flowMlMin > drainPeakFlowMlMin) {

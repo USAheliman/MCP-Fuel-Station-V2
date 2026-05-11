@@ -1,6 +1,7 @@
 #include "Screen.h"
 #include "../../include/pins.h"
 #include "../../include/version.h"
+#include "../../include/splash_image.h"
 #include "../heli/HeliLib.h"
 #include "../rtc/RTC.h"
 #include <TFT_eSPI.h>
@@ -166,6 +167,13 @@ static bool jpgOutput(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bm
                 photoBuf[dy * PHOTO_W + dx] = bmp[row * w + col];
         }
     }
+    return 1;
+}
+
+// Splash callback — writes decoded JPEG blocks directly into the sprite.
+static bool jpgSplashOutput(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bmp)
+{
+    spr.pushImage(x, y, w, h, bmp);
     return 1;
 }
 
@@ -674,6 +682,26 @@ void Screen_Init()
 
     gScreenChgMs = millis();
     Serial.println("Screen: init OK");
+}
+
+void Screen_ShowSplash()
+{
+    spr.fillSprite(0xFFFF);   // white canvas matches image background
+    TJpgDec.setJpgScale(1);
+    TJpgDec.setCallback(jpgSplashOutput);
+    TJpgDec.drawJpg(0, 0, SPLASH_JPG, SPLASH_JPG_LEN);
+    TJpgDec.setJpgScale(2);
+    TJpgDec.setCallback(jpgOutput);   // restore for photo thumbnails
+
+    // Title bar at the bottom
+    spr.fillRect(0, SCR_H - 44, SCR_W, 44, C_RED);
+    spr.setTextDatum(MC_DATUM);
+    spr.setTextFont(4);
+    spr.setTextColor(C_WHITE, C_RED);
+    spr.drawString("MCP Fuel Station", SCR_W / 2, SCR_H - 22);
+    spr.setTextFont(1);
+
+    spr.pushSprite(0, 0);
 }
 
 // ════════════════════════════════════════════════════════════════

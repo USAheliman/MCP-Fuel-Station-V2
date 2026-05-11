@@ -847,9 +847,8 @@ static void BuzzerStartup()
 void setup()
 {
     Serial.begin(115200);
-    // Wait up to 3 s for USB CDC to enumerate so boot messages are visible
-    { uint32_t t0 = millis(); while (!Serial && millis() - t0 < 3000) yield(); }
-    delay(100);
+    // Short wait for USB CDC — keeps dev experience, doesn't block normal boot
+    { uint32_t t0 = millis(); while (!Serial && millis() - t0 < 200) yield(); }
     Serial.printf("\nMCP Fuel Station V2  %s  %s %s\n",
                   FW_VERSION, FW_BUILD_DATE, FW_BUILD_TIME);
 
@@ -859,23 +858,24 @@ void setup()
 
     Sensors_Init();
     RTC_Init();
+    // RTClib calls Wire.begin() internally, resetting clock and timeout.
+    // Re-apply here so both DS3231 and ABP2 run at correct settings.
+    Wire.setClock(400000);
+    Wire.setTimeout(10);
     Pump_Init();
     Screen_Init();
+    Screen_ShowSplash();
+    uint32_t splashMs = millis();   // hold splash for at least 2 s total
     Power_Init(OnShortPress, OnBackPress, OnShutdown);
     WebServer_Init();
     WebServer_SetCommandHandler(OnWebCommand);
-    RTC_NTPSync();   // sync DS3231 from NTP while WiFi is fresh
+    // NTP sync and STA IP deferred to loop() — run once WiFi connects
 
-    // Push network IPs to screen (shown on SCREEN_NET)
+    // AP IP is available immediately; STA IP updated in loop once connected
     {
-        String staIP = WebServer_GetLocalIP();
-        String apIP  = WiFi.softAPIP().toString();
-        Screen_SetNetworkIP(staIP.c_str(), apIP.c_str());
-
-        // Show IP in the message bar for first 6 seconds after boot
-        char ipMsg[40];
-        snprintf(ipMsg, sizeof(ipMsg), "OTA: %s/ota", staIP.c_str());
-        SetMessage(ipMsg, MSG_IDLE);
+        String apIP = WiFi.softAPIP().toString();
+        Screen_SetNetworkIP("", apIP.c_str());
+        SetMessage(apIP.c_str(), MSG_IDLE);
     }
 
     ESP32Encoder::useInternalWeakPullResistors = puType::UP;
@@ -891,6 +891,10 @@ void setup()
     gDisplay.outerTankPct = supplyTankCapacityMl > 0
         ? constrain((int)(100.0f * supplyTankRemainingMl / supplyTankCapacityMl), 0, 100) : 0;
 
+    // Ensure splash is visible for at least 2 s (init is fast, so pad the rest)
+    uint32_t splashElapsed = millis() - splashMs;
+    if (splashElapsed < 2000) delay(2000 - splashElapsed);
+
     Screen_SetScreen(SCREEN_HOME);
     Serial.println("Setup complete — entering loop");
 }
@@ -901,6 +905,30 @@ void setup()
 void loop()
 {
     uint32_t now = millis();
+
+    // One-shot: NTP sync + full IP display once home WiFi connects
+    static bool wifiPostDone = false;
+    if (!wifiPostDone && WiFi.status() == WL_CONNECTED) {
+        wifiPostDone = true;
+        RTC_NTPSync();
+        String staIP = WebServer_GetLocalIP();
+        String apIP  = WiFi.softAPIP().toString();
+        Screen_SetNetworkIP(staIP.c_str(), apIP.c_str());
+        char ipMsg[40];
+        snprintf(ipMsg, sizeof(ipMsg), "OTA: %s/ota", staIP.c_str());
+        SetMessage(ipMsg, MSG_IDLE);
+    }
+
+    // Debug: print I2C sensor status every 5 s for first 60 s after boot
+    static uint32_t dbgLastMs = 0;
+    if (now < 60000 && now - dbgLastMs >= 5000) {
+        dbgLastMs = now;
+        Serial.printf("[DBG %lus] RTC=%s  Pressure=%.2fbar  BattV=%.2fV\n",
+                      now / 1000,
+                      RTC_IsRunning() ? "OK" : "FAIL",
+                      Sensors_PressureBar(),
+                      Sensors_BattVoltage());
+    }
 
     encoderPoll();
     Sensors_Update();
@@ -938,6 +966,10 @@ void loop()
         gDisplay.mainTankPct  = 0;
         gDisplay.volumeMl     = 0;
     }
+
+    // Pressure always reflects latest sensor reading (Sensors_Update caches at 2 Hz)
+    gDisplay.pressurePct = constrain(
+        (int)(Sensors_PressureBar() / PRESSURE_MAX_BAR * 100.0f), 0, 100);
 
     // Clear startup IP message after 6 s; then show normal idle text
     static bool ipMsgCleared = false;

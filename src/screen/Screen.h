@@ -51,6 +51,7 @@ struct ScreenData {
 
 // ── Public API ───────────────────────────────────────────────────
 void     Screen_Init();
+void     Screen_ShowSplash();
 void     Screen_Update(const ScreenData& data);
 void     Screen_SetScreen(ScreenID s);
 ScreenID Screen_CurrentScreen();

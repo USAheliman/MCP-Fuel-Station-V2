@@ -256,22 +256,12 @@ void WebServer_Init()
     // AP mode — always available (field fallback)
     WiFi.mode(WIFI_AP_STA);
     WiFi.softAP(AP_SSID, AP_PASS);
-    delay(500);
     Serial.printf("AP: %s  IP: %s\n", AP_SSID, WiFi.softAPIP().toString().c_str());
 
-    // Home WiFi (SilverLining via build flag)
+    // Home WiFi — start async; caller checks WL_CONNECTED in loop()
     if (strlen(HOME_SSID) > 0) {
-        Serial.printf("Connecting to %s ", HOME_SSID);
+        Serial.printf("Connecting to %s (async)\n", HOME_SSID);
         WiFi.begin(HOME_SSID, HOME_PASS);
-        int tries = 0;
-        while (WiFi.status() != WL_CONNECTED && tries++ < 20) {
-            delay(500); Serial.print(".");
-        }
-        Serial.println();
-        if (WiFi.status() == WL_CONNECTED)
-            Serial.printf("WiFi: %s\n", WiFi.localIP().toString().c_str());
-        else
-            Serial.println("WiFi not found — AP only");
     }
 
     if (MDNS.begin("fuelstation"))

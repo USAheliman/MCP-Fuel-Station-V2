@@ -65,7 +65,8 @@ static uint8_t lowBattCount = 0;
 
 // ── Screen data ───────────────────────────────────────────────────
 static ScreenData gDisplay;
-static bool gLastPumpWasDrain = false;   // for post-pump START restart
+static bool gLastPumpWasDrain  = false;   // for post-pump START restart
+static bool gWaitingForSensor = false;    // fill blocked waiting for tank sensor
 
 // ── Message helpers ───────────────────────────────────────────────
 static void SetMessage(const char* msg, uint16_t colour)
@@ -432,10 +433,19 @@ void BeginFill()
     gLastPumpWasDrain = false;
     Screen_ClearPostPump();
     if (!fillCalActive && heliModels[activeModelIndex].hasTankSensor && !Sensors_IsTankSensorFitted()) {
+        if (!gWaitingForSensor) {
+            Logger_Write(LOG_WARN, CAT_SENSOR, "FILL_NO_SENSOR",
+                         heliModels[activeModelIndex].name);
+            gWaitingForSensor = true;
+        }
         SetMessage("Connect Tank Full Sensor", MSG_WARN);
         return;
     }
-    if (!fillCalActive && heliModels[activeModelIndex].hasTankSensor && Sensors_IsTankFull()) return;
+    gWaitingForSensor = false;
+    if (!fillCalActive && heliModels[activeModelIndex].hasTankSensor && Sensors_IsTankFull()) {
+        SetMessage("Tank already full", MSG_WARN);
+        return;
+    }
 
     noInterrupts(); fillPulses = 0; interrupts();
     lastFillVolumeMl       = 0;
@@ -460,7 +470,8 @@ void BeginFill()
 void BeginDrain()
 {
     if (lowBatteryLatched) return;
-    gLastPumpWasDrain = true;
+    gLastPumpWasDrain  = true;
+    gWaitingForSensor  = false;
     Screen_ClearPostPump();
     noInterrupts(); drainPulses = 0; interrupts();
     lastDrainVolumeMl      = 0;
@@ -487,6 +498,7 @@ void BeginDrain()
 
 void StopFill()
 {
+    gWaitingForSensor = false;
     Logger_Write(LOG_INFO, CAT_PUMP, "FILL_STOP",
                  heliModels[activeModelIndex].name, lastFillVolumeMl);
     Logger_ClearPumpState();
@@ -543,6 +555,17 @@ static void UpdateFillFlow(uint32_t now)
     if (PumpEnabled && autoFillSequence != AF_PURGING && !fillCalActive) {
         if (targetFillMl > 0 && lastFillVolumeMl >= targetFillMl) {
             Pump_Stop(); BeginOverflowPurge(); return;
+        }
+        if (heliModels[activeModelIndex].hasTankSensor && !Sensors_IsTankSensorFitted()) {
+            Pump_Stop();
+            autoFillSequence = AF_NONE;
+            Logger_Write(LOG_WARN, CAT_SENSOR, "FILL_SENSOR_LOST",
+                         heliModels[activeModelIndex].name, (float)lastFillVolumeMl);
+            Logger_ClearPumpState();
+            SaveStationToFS();
+            SetMessage("Sensor lost — fill stopped!", MSG_WARN);
+            Screen_SetPostPump(false);
+            return;
         }
         if (heliModels[activeModelIndex].hasTankSensor && Sensors_IsTankSensorFitted() && Sensors_IsTankFull()) {
             Pump_Stop(); BeginOverflowPurge(); return;
@@ -1037,6 +1060,25 @@ void loop()
     encoderPoll();
     Sensors_Update();
     Pump_UpdateRamp();
+
+    // Auto-proceed with fill when the tank sensor is plugged in after a warning.
+    // 150 ms settle window filters electrical noise during connector insertion.
+    if (gWaitingForSensor && !PumpEnabled && Screen_CurrentScreen() == SCREEN_HOME) {
+        static uint32_t sensorFitMs = 0;
+        if (Sensors_IsTankSensorFitted()) {
+            if (sensorFitMs == 0) sensorFitMs = now;
+            if (now - sensorFitMs >= 150) {
+                sensorFitMs       = 0;
+                gWaitingForSensor = false;
+                SetMessage("", MSG_IDLE);
+                Logger_Write(LOG_INFO, CAT_SENSOR, "FILL_SENSOR_OK",
+                             heliModels[activeModelIndex].name);
+                BeginFill();
+            }
+        } else {
+            sensorFitMs = 0;   // reset if sensor disconnects mid-settle
+        }
+    }
 
     // Flow tracking
     if (PumpEnabled && autoFillSequence != AF_PURGING) {

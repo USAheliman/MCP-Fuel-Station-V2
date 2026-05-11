@@ -34,3 +34,10 @@ void Logger_Write(LogLevel level, LogCategory cat, const char* event,
 // File sizes in bytes (0 if file absent).
 size_t Logger_CurrentSize();
 size_t Logger_ArchiveSize();
+
+// Pump-state persistence across power loss.
+// Call SavePumpState at pump start and every ~10 s during pumping.
+// Call ClearPumpState at every normal stop path.
+// Logger_Init() checks for a leftover state file and logs PUMP_INTERRUPTED if found.
+void Logger_SavePumpState(const char* op, const char* model, int targetMl, int volMl);
+void Logger_ClearPumpState();

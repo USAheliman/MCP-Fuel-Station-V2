@@ -452,6 +452,7 @@ void BeginFill()
 
     Logger_Write(LOG_INFO, CAT_PUMP, "FILL_START",
                  heliModels[activeModelIndex].name, (float)targetFillMl);
+    Logger_SavePumpState("FILL", heliModels[activeModelIndex].name, targetFillMl, 0);
     SetMessage("Filling", MSG_FILLING);
 }
 
@@ -479,6 +480,7 @@ void BeginDrain()
 
     Logger_Write(LOG_INFO, CAT_PUMP, "DRAIN_START",
                  heliModels[activeModelIndex].name, (float)targetDrainMl);
+    Logger_SavePumpState("DRAIN", heliModels[activeModelIndex].name, targetDrainMl, 0);
     SetMessage("Draining", MSG_DRAINING);
 }
 
@@ -486,6 +488,7 @@ void StopFill()
 {
     Logger_Write(LOG_INFO, CAT_PUMP, "FILL_STOP",
                  heliModels[activeModelIndex].name, lastFillVolumeMl);
+    Logger_ClearPumpState();
     Pump_Stop();
     SaveStationToFS();
     SetMessage("Stopped", MSG_IDLE);
@@ -527,6 +530,14 @@ static void UpdateFillFlow(uint32_t now)
         ? constrain((int)(100.0f * closedLoopCurrentPwm / MAX_PWM), 0, 100) : 0;
     gDisplay.pressurePct  = constrain((int)(Sensors_PressureBar() / 4.0f * 100.0f), 0, 100);
 
+    // Persist pump state every 10 s so power-loss detection stays current
+    static uint32_t lastFillStateMs = 0;
+    if (now - lastFillStateMs >= 10000) {
+        lastFillStateMs = now;
+        Logger_SavePumpState("FILL", heliModels[activeModelIndex].name,
+                             targetFillMl, lastFillVolumeMl);
+    }
+
     // Auto-stop conditions — all bypassed during calibration
     if (PumpEnabled && autoFillSequence != AF_PURGING && !fillCalActive) {
         if (targetFillMl > 0 && lastFillVolumeMl >= targetFillMl) {
@@ -545,6 +556,7 @@ void BeginOverflowPurge()
                  heliModels[activeModelIndex].name, lastFillVolumeMl);
     int secs = heliModels[activeModelIndex].purgeSecs;
     if (secs <= 0) {
+        Logger_ClearPumpState();
         heliModels[activeModelIndex].totalFills++;
         heliModels[activeModelIndex].totalFillMl += (uint32_t)lastFillVolumeMl;
         HeliLib_Save(activeModelIndex);
@@ -601,6 +613,14 @@ static void UpdateDrainFlow(uint32_t now)
         ? constrain((int)(100.0f * drainClosedLoopCurrentPwm / MAX_PWM), 0, 100) : 0;
     gDisplay.pressurePct  = constrain((int)(Sensors_PressureBar() / 4.0f * 100.0f), 0, 100);
 
+    // Persist pump state every 10 s so power-loss detection stays current
+    static uint32_t lastDrainStateMs = 0;
+    if (now - lastDrainStateMs >= 10000) {
+        lastDrainStateMs = now;
+        Logger_SavePumpState("DRAIN", heliModels[activeModelIndex].name,
+                             targetDrainMl, lastDrainVolumeMl);
+    }
+
     // Tank empty detection (ported from V1)
     if (PumpEnabled && flowMlMin > drainPeakFlowMlMin) {
         drainPeakFlowMlMin = flowMlMin;
@@ -612,6 +632,7 @@ static void UpdateDrainFlow(uint32_t now)
     if (!drainCalActive && PumpEnabled && (millis() - drainStartMs) >= tankEmptyMinRunMs && gated) {
         if (drainPeakFlowMlMin < TANK_EMPTY_MIN_PEAK_FLOW) {
             Pump_Stop();
+            Logger_ClearPumpState();
             heliModels[activeModelIndex].totalDrains++;
             heliModels[activeModelIndex].totalDrainMl += (uint32_t)lastDrainVolumeMl;
             HeliLib_Save(activeModelIndex);
@@ -629,6 +650,7 @@ static void UpdateDrainFlow(uint32_t now)
                 heliModels[activeModelIndex].totalDrains++;
                 heliModels[activeModelIndex].totalDrainMl += (uint32_t)lastDrainVolumeMl;
                 HeliLib_Save(activeModelIndex);
+                Logger_ClearPumpState();
                 Logger_Write(LOG_INFO, CAT_PUMP, "DRAIN_COMPLETE",
                              heliModels[activeModelIndex].name,
                              lastDrainVolumeMl, (float)drainPeakFlowMlMin);
@@ -671,6 +693,7 @@ static void UpdateAutoSequence(uint32_t now)
             heliModels[activeModelIndex].totalFills++;
             heliModels[activeModelIndex].totalFillMl += (uint32_t)lastFillVolumeMl;
             HeliLib_Save(activeModelIndex);
+            Logger_ClearPumpState();
             Logger_Write(LOG_INFO, CAT_PUMP, "AUTO_FILL_DONE",
                          heliModels[activeModelIndex].name, lastFillVolumeMl);
             SetMessage("Complete", MSG_COMPLETE);
@@ -899,6 +922,8 @@ void setup()
                      (float)(ESP.getFreeHeap() / 1024));
         if (rr == ESP_RST_PANIC)
             Logger_Write(LOG_FAULT, CAT_SYSTEM, "PREV_CRASH", "Device rebooted after panic");
+        if (rr == ESP_RST_BROWNOUT)
+            Logger_Write(LOG_FAULT, CAT_POWER, "BROWNOUT", "Device reset — supply voltage collapsed");
         if (!RTC_IsRunning())
             Logger_Write(LOG_ERROR, CAT_SENSOR, "RTC_FAIL", "DS3231 not found on I2C");
         if (!Sensors_IsPressureFound())

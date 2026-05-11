@@ -6,10 +6,11 @@
 // ════════════════════════════════════════════════════════════════
 // Storage layout
 // ════════════════════════════════════════════════════════════════
-#define LOG_DIR      "/logs"
-#define LOG_FILE     "/logs/log.csv"
-#define LOG_OLD      "/logs/log_old.csv"
+#define LOG_DIR       "/logs"
+#define LOG_FILE      "/logs/log.csv"
+#define LOG_OLD       "/logs/log_old.csv"
 #define LOG_MAX_BYTES (512UL * 1024UL)   // rotate at 512 KB (~5000 entries)
+#define PUMP_STATE_FILE "/logs/pump_state.txt"
 
 static const char CSV_HEADER[] =
     "Timestamp,Epoch,Level,Category,Event,Detail,Val1,Val2\n";
@@ -51,8 +52,40 @@ void Logger_Init()
         File f = LittleFS.open(LOG_FILE, "w");
         if (f) { f.print(CSV_HEADER); f.close(); }
     }
+
+    // Detect pump running at power loss: state file exists only if pump
+    // was active and never reached a normal stop.
+    if (LittleFS.exists(PUMP_STATE_FILE)) {
+        char state[128] = "";
+        File f = LittleFS.open(PUMP_STATE_FILE, "r");
+        if (f) {
+            int len = f.readBytesUntil('\n', state, sizeof(state) - 1);
+            state[len] = '\0';
+            f.close();
+        }
+        LittleFS.remove(PUMP_STATE_FILE);
+        Logger_Write(LOG_FAULT, CAT_PUMP, "PUMP_INTERRUPTED",
+                     state[0] ? state : "pump running at power loss");
+    }
+
     Serial.printf("Logger: init OK  current=%u B  archive=%u B\n",
                   (unsigned)Logger_CurrentSize(), (unsigned)Logger_ArchiveSize());
+}
+
+void Logger_SavePumpState(const char* op, const char* model, int targetMl, int volMl)
+{
+    File f = LittleFS.open(PUMP_STATE_FILE, "w");
+    if (!f) return;
+    char ts[24];
+    if (RTC_IsRunning()) RTC_GetLogTimestamp(ts, sizeof(ts));
+    else snprintf(ts, sizeof(ts), "T+%lus", millis() / 1000);
+    f.printf("%s,%s,%s,%d,%d\n", op, ts, model ? model : "", targetMl, volMl);
+    f.close();
+}
+
+void Logger_ClearPumpState()
+{
+    LittleFS.remove(PUMP_STATE_FILE);
 }
 
 void Logger_Write(LogLevel level, LogCategory cat, const char* event,

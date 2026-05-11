@@ -554,47 +554,90 @@ static void renderModelBrowser()
 
 // ════════════════════════════════════════════════════════════════
 // Screen: NETWORK / OTA
+//
+//  Two side-by-side cards (y=44, h=112):
+//    Left  — Access Point info (mDNS + AP IP)
+//    Right — Home WiFi status + STA IP
+//  Full-width log card (y=166, h=68) with Font4 URL
+//  Hint strip at y=252
 // ════════════════════════════════════════════════════════════════
 static void renderNetwork()
 {
     spr.fillRect(0, CONTENT_Y, SCR_W, CONTENT_H, C_BG);
 
-    int y = CONTENT_Y + 20;
+    const int CARD_Y = CONTENT_Y + 8;          // 44
+    const int CARD_H = 112;
+    const int CARD_W = (SCR_W - 24) / 2;       // 228
+    const int CARD_L = 8;
+    const int CARD_R = CARD_L + CARD_W + 8;    // 244
+    const int cx     = CARD_L + CARD_W / 2;    // 122 — left card centre
+    const int rx     = CARD_R + CARD_W / 2;    // 358 — right card centre
+
     spr.setTextDatum(TC_DATUM);
 
-    spr.setTextSize(1);
-    spr.setTextColor(C_GREY, C_BG);
-    spr.drawString("ACCESS POINT", SCR_W / 2, y);   y += 20;
+    // ── Access Point card ────────────────────────────────────────
+    spr.fillRoundRect(CARD_L, CARD_Y, CARD_W, CARD_H, 6, C_HDR);
+    spr.drawRoundRect(CARD_L, CARD_Y, CARD_W, CARD_H, 6, C_ACCENT);
 
-    spr.setTextSize(3);
-    spr.setTextColor(C_ACCENT, C_BG);
-    spr.drawString("fuelstation.local", SCR_W / 2, y);  y += 40;
+    spr.setTextSize(1);
+    spr.setTextColor(C_GREY, C_HDR);
+    spr.drawString("ACCESS POINT", cx, CARD_Y + 10);
 
     spr.setTextSize(2);
-    spr.setTextColor(C_WHITE, C_BG);
-    spr.drawString(gNetApIP[0] ? gNetApIP : "---", SCR_W / 2, y);  y += 40;
+    spr.setTextColor(C_ACCENT, C_HDR);
+    spr.drawString("fuelstation.local", cx, CARD_Y + 32);
 
-    spr.drawFastHLine(16, y, SCR_W - 32, C_SEP);  y += 22;
+    spr.setTextSize(2);
+    spr.setTextColor(C_WHITE, C_HDR);
+    spr.drawString(gNetApIP[0] ? gNetApIP : "---", cx, CARD_Y + 58);
 
     spr.setTextSize(1);
-    spr.setTextColor(C_GREY, C_BG);
-    spr.drawString("WIFI", SCR_W / 2, y);  y += 20;
+    spr.setTextColor(C_GREEN, C_HDR);
+    spr.drawString("Always active", cx, CARD_Y + 90);
 
+    // ── Home WiFi card ───────────────────────────────────────────
     bool conn = strlen(gNetStaIP) > 0 && strcmp(gNetStaIP, "0.0.0.0") != 0;
-    spr.setTextSize(2);
-    spr.setTextColor(conn ? C_GREEN : C_RED, C_BG);
-    spr.drawString(conn ? gNetStaIP : "Not connected", SCR_W / 2, y);  y += 36;
+
+    spr.fillRoundRect(CARD_R, CARD_Y, CARD_W, CARD_H, 6, C_HDR);
+    spr.drawRoundRect(CARD_R, CARD_Y, CARD_W, CARD_H, 6, conn ? C_GREEN : C_ORANGE);
 
     spr.setTextSize(1);
-    spr.setTextColor(C_GREY, C_BG);
-    spr.drawString("Open browser to configure or update firmware", SCR_W / 2, y);
+    spr.setTextColor(C_GREY, C_HDR);
+    spr.drawString("HOME WIFI", rx, CARD_Y + 10);
 
-    y += 24;
+    spr.setTextSize(2);
+    spr.setTextColor(conn ? C_GREEN : C_ORANGE, C_HDR);
+    spr.drawString(conn ? "CONNECTED" : "NOT CONNECTED", rx, CARD_Y + 32);
+
+    spr.setTextSize(2);
+    spr.setTextColor(C_WHITE, C_HDR);
+    spr.drawString(conn ? gNetStaIP : "---", rx, CARD_Y + 58);
+
+    spr.setTextSize(1);
+    spr.setTextColor(C_GREY, C_HDR);
+    spr.drawString(conn ? "via home network" : "Use AP to connect", rx, CARD_Y + 90);
+
+    // ── Event Log card ───────────────────────────────────────────
+    const int LOG_Y = CARD_Y + CARD_H + 10;    // 166
+    const int LOG_H = 68;
+
+    spr.fillRoundRect(8, LOG_Y, SCR_W - 16, LOG_H, 6, C_HDR);
+    spr.drawRoundRect(8, LOG_Y, SCR_W - 16, LOG_H, 6, C_PURPLE);
+
+    spr.setTextSize(1);
+    spr.setTextColor(C_GREY, C_HDR);
+    spr.drawString("EVENT LOG", SCR_W / 2, LOG_Y + 8);
+
+    spr.setTextFont(4);
+    spr.setTextColor(C_ACCENT, C_HDR);
+    spr.drawString("fuelstation.local/log", SCR_W / 2, LOG_Y + 26);
+    spr.setTextFont(1);
+
+    // ── Hint strip ───────────────────────────────────────────────
+    spr.setTextSize(1);
     spr.setTextColor(C_GREY, C_BG);
-    spr.drawString("Event Log:", SCR_W / 2, y);
-    y += 16;
-    spr.setTextColor(C_ACCENT, C_BG);
-    spr.drawString("fuelstation.local/log", SCR_W / 2, y);
+    spr.drawString("Open browser to configure or update firmware  |  OTA update available via WIFI",
+                   SCR_W / 2, LOG_Y + LOG_H + 12);
 }
 
 // ════════════════════════════════════════════════════════════════

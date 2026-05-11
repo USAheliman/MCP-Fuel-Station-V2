@@ -14,6 +14,8 @@
 #include "rtc/RTC.h"
 #include "ui/Power.h"
 #include "web/WebServer.h"
+#include "log/Logger.h"
+#include <esp_system.h>
 
 // ═══════════════════════════════════════════════════════════════════
 // MCP Fuel Station V2 — main.cpp
@@ -448,6 +450,8 @@ void BeginFill()
     PumpEnabled = true;
     Pump_SetTarget(+MIN_PWM);
 
+    Logger_Write(LOG_INFO, CAT_PUMP, "FILL_START",
+                 heliModels[activeModelIndex].name, (float)targetFillMl);
     SetMessage("Filling", MSG_FILLING);
 }
 
@@ -473,11 +477,15 @@ void BeginDrain()
     PumpEnabled = true;
     Pump_SetTarget(-MIN_PWM);
 
+    Logger_Write(LOG_INFO, CAT_PUMP, "DRAIN_START",
+                 heliModels[activeModelIndex].name, (float)targetDrainMl);
     SetMessage("Draining", MSG_DRAINING);
 }
 
 void StopFill()
 {
+    Logger_Write(LOG_INFO, CAT_PUMP, "FILL_STOP",
+                 heliModels[activeModelIndex].name, lastFillVolumeMl);
     Pump_Stop();
     SaveStationToFS();
     SetMessage("Stopped", MSG_IDLE);
@@ -533,6 +541,8 @@ static void UpdateFillFlow(uint32_t now)
 // ── Overflow purge (ported from V1) ──────────────────────────────
 void BeginOverflowPurge()
 {
+    Logger_Write(LOG_INFO, CAT_PUMP, "FILL_COMPLETE",
+                 heliModels[activeModelIndex].name, lastFillVolumeMl);
     int secs = heliModels[activeModelIndex].purgeSecs;
     if (secs <= 0) {
         heliModels[activeModelIndex].totalFills++;
@@ -605,6 +615,8 @@ static void UpdateDrainFlow(uint32_t now)
             heliModels[activeModelIndex].totalDrains++;
             heliModels[activeModelIndex].totalDrainMl += (uint32_t)lastDrainVolumeMl;
             HeliLib_Save(activeModelIndex);
+            Logger_Write(LOG_WARN, CAT_PUMP, "DRAIN_EMPTY",
+                         heliModels[activeModelIndex].name, lastDrainVolumeMl);
             SetMessage("Tank was empty", MSG_WARN);
             Screen_SetPostPump(true);
             return;
@@ -617,6 +629,9 @@ static void UpdateDrainFlow(uint32_t now)
                 heliModels[activeModelIndex].totalDrains++;
                 heliModels[activeModelIndex].totalDrainMl += (uint32_t)lastDrainVolumeMl;
                 HeliLib_Save(activeModelIndex);
+                Logger_Write(LOG_INFO, CAT_PUMP, "DRAIN_COMPLETE",
+                             heliModels[activeModelIndex].name,
+                             lastDrainVolumeMl, (float)drainPeakFlowMlMin);
                 if (autoFillSequence == AF_DRAINING) {
                     autoFillTransitionMs = millis();
                     SetMessage("Drain done — filling...", MSG_IDLE);
@@ -656,6 +671,8 @@ static void UpdateAutoSequence(uint32_t now)
             heliModels[activeModelIndex].totalFills++;
             heliModels[activeModelIndex].totalFillMl += (uint32_t)lastFillVolumeMl;
             HeliLib_Save(activeModelIndex);
+            Logger_Write(LOG_INFO, CAT_PUMP, "AUTO_FILL_DONE",
+                         heliModels[activeModelIndex].name, lastFillVolumeMl);
             SetMessage("Complete", MSG_COMPLETE);
             Screen_SetPostPump(false);
         }
@@ -685,6 +702,8 @@ static void UpdateBattery()
             Pump_Stop();
             SetMessage("LOW BATTERY!", MSG_WARN);
             Serial.printf("Low battery: %.2fV/cell\n", vCell);
+            Logger_Write(LOG_WARN, CAT_POWER, "BATT_LOW", "Pump disabled",
+                         packV, vCell);
         }
     }
 }
@@ -820,6 +839,8 @@ void OnBackPress()
 // ── Shutdown callback — save before power cut ─────────────────────
 void OnShutdown()
 {
+    Logger_Write(LOG_INFO, CAT_SYSTEM, "SHUTDOWN", nullptr,
+                 (float)Sensors_BattVoltage());
     HeliLib_SaveAll();
     SaveStationToFS();
     Serial.println("Shutdown: saved all");
@@ -855,6 +876,7 @@ void setup()
     HeliLib_Init();
     HeliLib_Load();
     LoadStationFromFS();
+    Logger_Init();   // LittleFS is ready after HeliLib_Init
 
     Sensors_Init();
     RTC_Init();
@@ -863,6 +885,26 @@ void setup()
     Wire.setClock(400000);
     Wire.setTimeout(10);
     Pump_Init();
+    // ── Boot log — written before display so it captures hardware faults ──
+    {
+        static const char* resetReasons[] = {
+            "UNKNOWN","POWER_ON","EXT_PIN","SW_RESET","PANIC",
+            "INT_WDT","TASK_WDT","WDT","BROWNOUT","SDIO","USB"
+        };
+        esp_reset_reason_t rr = esp_reset_reason();
+        int ri = (rr >= 0 && rr <= 10) ? (int)rr : 0;
+        char bootDetail[48];
+        snprintf(bootDetail, sizeof(bootDetail), "%s / %s", FW_VERSION, resetReasons[ri]);
+        Logger_Write(LOG_INFO, CAT_SYSTEM, "BOOT", bootDetail,
+                     (float)(ESP.getFreeHeap() / 1024));
+        if (rr == ESP_RST_PANIC)
+            Logger_Write(LOG_FAULT, CAT_SYSTEM, "PREV_CRASH", "Device rebooted after panic");
+        if (!RTC_IsRunning())
+            Logger_Write(LOG_ERROR, CAT_SENSOR, "RTC_FAIL", "DS3231 not found on I2C");
+        if (!Sensors_IsPressureFound())
+            Logger_Write(LOG_WARN, CAT_SENSOR, "PRESSURE_FAIL", "ABP2 not found — pressure disabled");
+    }
+
     Screen_Init();
     Screen_ShowSplash();
     uint32_t splashMs = millis();   // hold splash for at least 2 s total
@@ -910,8 +952,11 @@ void loop()
     static bool wifiPostDone = false;
     if (!wifiPostDone && WiFi.status() == WL_CONNECTED) {
         wifiPostDone = true;
-        RTC_NTPSync();
         String staIP = WebServer_GetLocalIP();
+        Logger_Write(LOG_INFO, CAT_NETWORK, "WIFI_CONNECTED", staIP.c_str());
+        bool ntpOk = RTC_NTPSync();
+        Logger_Write(ntpOk ? LOG_INFO : LOG_WARN, CAT_SYSTEM,
+                     ntpOk ? "NTP_SYNC_OK" : "NTP_SYNC_FAIL", nullptr);
         String apIP  = WiFi.softAPIP().toString();
         Screen_SetNetworkIP(staIP.c_str(), apIP.c_str());
         char ipMsg[40];

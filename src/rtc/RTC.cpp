@@ -20,9 +20,9 @@ void RTC_Init()
     Serial.println("RTC: init OK");
 }
 
-void RTC_NTPSync()
+bool RTC_NTPSync()
 {
-    if (!rtcOk) return;
+    if (!rtcOk) return false;
 
     // UK timezone: GMT in winter, BST (UTC+1) in summer
     configTime(0, 0, "pool.ntp.org", "time.google.com");
@@ -33,7 +33,7 @@ void RTC_NTPSync()
     struct tm timeinfo;
     if (!getLocalTime(&timeinfo, 2000)) {
         Serial.println("RTC: NTP sync failed (timeout)");
-        return;
+        return false;
     }
 
     rtc.adjust(DateTime(
@@ -47,6 +47,7 @@ void RTC_NTPSync()
     Serial.printf("RTC: NTP sync OK — %02d/%02d/%04d %02d:%02d:%02d\n",
                   timeinfo.tm_mday, timeinfo.tm_mon + 1, timeinfo.tm_year + 1900,
                   timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+    return true;
 }
 
 bool RTC_IsRunning() { return rtcOk; }
@@ -84,6 +85,16 @@ void RTC_GetHeaderStr(char* buf, int maxLen)
              kMonths[constrain((int)now.month() - 1, 0, 11)],
              now.hour(),
              now.minute());
+}
+
+void RTC_GetLogTimestamp(char* buf, int maxLen)
+{
+    if (!buf || maxLen < 2) return;
+    if (!rtcOk) { strncpy(buf, "----", maxLen); return; }
+    DateTime t = rtc.now();
+    snprintf(buf, maxLen, "%04d-%02d-%02d %02d:%02d:%02d",
+             t.year(), t.month(), t.day(),
+             t.hour(), t.minute(), t.second());
 }
 
 uint32_t RTC_GetEpoch()

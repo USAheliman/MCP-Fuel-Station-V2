@@ -43,6 +43,7 @@ extern float lastPressureBar;
 // ── API ───────────────────────────────────────────────────────────
 void Sensors_Init();
 void Sensors_Update();          // call every loop — non-blocking
+bool Sensors_IsPressureFound(); // true if ABP2 responded at init
 
 bool Sensors_IsTankFull();
 bool Sensors_IsTankSensorFitted();

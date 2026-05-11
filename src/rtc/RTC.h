@@ -7,11 +7,14 @@
 // ═══════════════════════════════════════════════════════════════════
 
 void     RTC_Init();
-void     RTC_NTPSync();   // call after WiFi connects — syncs DS3231 from NTP (≤2 s)
+bool     RTC_NTPSync();   // returns true on success; call after WiFi connects
 bool     RTC_IsRunning();
 
-// Fills buf with "10 May 2026  14:32" — for logging / full timestamp
+// Fills buf with "10 May 2026  14:32" — display use
 void     RTC_GetDateTimeStr(char* buf, int maxLen);
+
+// Fills buf with "2026-05-10 14:32:01" — ISO format for log CSV
+void     RTC_GetLogTimestamp(char* buf, int maxLen);
 
 // Fills buf with "10 May 14:32" — compact format for screen header
 void     RTC_GetHeaderStr(char* buf, int maxLen);

@@ -1,5 +1,6 @@
 #include "WebServer.h"
 #include "../heli/HeliLib.h"
+#include "../log/Logger.h"
 #include <WiFi.h>
 #include <WebServer.h>
 #include <WebSocketsServer.h>
@@ -201,6 +202,7 @@ static bool otaInstallFromFS(int slot)
 
     size_t fsize = f.size();
     Serial.printf("OTA: installing slot %d  %u bytes\n", slot, fsize);
+    Logger_Write(LOG_INFO, CAT_SYSTEM, "OTA_INSTALL_START", path.c_str(), (float)fsize);
 
     const esp_partition_t* part = esp_ota_get_next_update_partition(NULL);
     if (!part) { f.close(); Serial.println("OTA: no update partition"); return false; }
@@ -230,6 +232,7 @@ static bool otaInstallFromFS(int slot)
     if (fi) { fi.print(slot); fi.close(); }
 
     Serial.printf("OTA: slot %d installed OK\n", slot);
+    Logger_Write(LOG_INFO, CAT_SYSTEM, "OTA_INSTALL_OK", nullptr, (float)slot);
     return true;
 }
 
@@ -349,6 +352,9 @@ void WebServer_Init()
                     otaUploadFile.close();
                     otaUploadOk = (otaUploadBytes > 0);
                     Serial.printf("OTA upload: %u bytes OK=%d\n", otaUploadBytes, otaUploadOk);
+                    Logger_Write(otaUploadOk ? LOG_INFO : LOG_ERROR,
+                                 CAT_SYSTEM, "OTA_UPLOAD",
+                                 up.filename.c_str(), (float)otaUploadBytes);
                 }
             }
         }
@@ -375,6 +381,154 @@ void WebServer_Init()
         File f    = root.openNextFile();
         while (f) { out += String(f.name()) + " (" + f.size() + ")\n"; f = root.openNextFile(); }
         httpServer.send(200, "text/plain", out);
+    });
+
+    // ── Log viewer ────────────────────────────────────────────────
+    static const char LOG_PAGE[] =
+        "<!DOCTYPE html><html lang='en'><head>"
+        "<meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>MCP Fuel Station &mdash; Log</title><style>"
+        "*{box-sizing:border-box;margin:0;padding:0}"
+        "body{font-family:system-ui,sans-serif;font-size:14px;background:#f0f2f5}"
+        "header{background:#c0392b;color:#fff;padding:11px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px}"
+        "header h1{font-size:16px;font-weight:700}"
+        "#st{font-size:12px;opacity:.85}"
+        ".ib{background:#2c3e50;color:#ecf0f1;padding:6px 16px;font-size:12px;display:flex;gap:16px;flex-wrap:wrap}"
+        ".ib strong{color:#fff}"
+        ".ct{padding:8px 16px;background:#fff;border-bottom:1px solid #dde;display:flex;gap:7px;flex-wrap:wrap;align-items:center}"
+        ".pl{padding:4px 12px;border:2px solid #bbb;border-radius:16px;cursor:pointer;font-size:12px;font-weight:600;background:#fff}"
+        ".pl.on{background:#2980b9;border-color:#2980b9;color:#fff}"
+        ".pl.w{border-color:#e67e22}.pl.w.on{background:#e67e22;border-color:#e67e22}"
+        ".pl.e{border-color:#e74c3c}.pl.e.on{background:#e74c3c;border-color:#e74c3c}"
+        ".pl.f{border-color:#8e44ad}.pl.f.on{background:#8e44ad;border-color:#8e44ad}"
+        "input[type=text]{padding:5px 9px;border:1px solid #ccc;border-radius:4px;font-size:13px;min-width:100px;flex:1;max-width:220px}"
+        ".btn{padding:6px 13px;border:none;border-radius:5px;cursor:pointer;font-size:12px;font-weight:600;text-decoration:none;display:inline-block}"
+        ".g{background:#27ae60;color:#fff}.b{background:#1a6b3a;color:#fff}.r{background:#c0392b;color:#fff}.d{background:#555;color:#fff}"
+        ".wr{overflow-x:auto;padding:0 8px 24px}"
+        "table{width:100%;border-collapse:collapse;margin-top:6px;font-size:12px}"
+        "th{background:#2c3e50;color:#ecf0f1;padding:7px 9px;text-align:left;white-space:nowrap;font-size:11px;text-transform:uppercase;letter-spacing:.4px}"
+        "td{padding:5px 9px;border-bottom:1px solid #eef;vertical-align:middle}"
+        ".ri{background:#fff}.rw{background:#fffaee}.re{background:#fff2f2}.rf{background:#f9f2ff}"
+        ".bk{display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:800}"
+        ".bi{background:#ecf0f1;color:#7f8c8d}.bw{background:#f39c12;color:#fff}.be{background:#e74c3c;color:#fff}.bf{background:#8e44ad;color:#fff}"
+        ".ct2{color:#95a5a6;font-size:11px}.ev{font-weight:600}.dt{color:#444;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}"
+        ".nm{font-family:monospace;color:#2980b9}.ts{white-space:nowrap;font-family:monospace;font-size:11px;color:#666}"
+        "@media(max-width:600px){th,td{padding:4px 6px}header h1{font-size:13px}}"
+        "</style></head><body>"
+        "<header><h1>&#9981; MCP Fuel Station &mdash; Event Log</h1><span id='st'>Connecting&hellip;</span></header>"
+        "<div class='ib'>"
+        "<span>Log: <strong id='fs'>&mdash;</strong></span>"
+        "<span>Archive: <strong id='as'>&mdash;</strong></span>"
+        "<span>Entries: <strong id='ec'>&mdash;</strong></span>"
+        "<span>Showing: <strong id='sc'>&mdash;</strong></span>"
+        "<span id='lt'></span></div>"
+        "<div class='ct'>"
+        "<span style='font-size:11px;font-weight:700;color:#888;text-transform:uppercase'>Filter:</span>"
+        "<button class='pl on' onclick='lv(\"ALL\",this)'>All</button>"
+        "<button class='pl' onclick='lv(\"INFO\",this)'>Info</button>"
+        "<button class='pl w' onclick='lv(\"WARN\",this)'>Warn</button>"
+        "<button class='pl e' onclick='lv(\"ERROR\",this)'>Error</button>"
+        "<button class='pl f' onclick='lv(\"FAULT\",this)'>Fault</button>"
+        "&nbsp;<input type='text' id='q' placeholder='&#128269; Search&hellip;' oninput='rnd()'>"
+        "&nbsp;<a class='btn g' href='/api/log/download'>&#8615; Download Log</a>"
+        "<a class='btn b' href='/api/log/download?archive=1'>&#8615; Archive</a>"
+        "<button class='btn r' onclick='clr()'>&#128465; Clear</button>"
+        "<button class='btn d' onclick='ld()'>&#8635; Refresh</button>"
+        "</div>"
+        "<div class='wr'><table>"
+        "<thead><tr><th>#</th><th>Timestamp</th><th>Level</th><th>Category</th><th>Event</th><th>Detail</th><th>Val 1</th><th>Val 2</th></tr></thead>"
+        "<tbody id='tb'></tbody></table></div>"
+        "<script>"
+        "var rw=[],al='ALL';"
+        "function parse(t){"
+          "return t.split('\\n').filter(function(l){return l.trim()&&!/^Timestamp/.test(l);})"
+          ".map(function(l){var c=pl(l);return{ts:c[0]||'',ep:c[1]||0,lv:c[2]||'INFO',cat:c[3]||'',ev:c[4]||'',dt:c[5]||'',v1:c[6]||'',v2:c[7]||''};}).reverse();}"
+        "function pl(s){"
+          "var r=[],c='',q=false;"
+          "for(var i=0;i<s.length;i++){var x=s[i];if(x=='\"')q=!q;else if(x==','&&!q){r.push(c.trim());c='';}else c+=x;}"
+          "r.push(c.trim());return r;}"
+        "function lc(n){return{INFO:'bi',WARN:'bw',ERROR:'be',FAULT:'bf'}[n]||'bi';}"
+        "function rc(n){return{INFO:'ri',WARN:'rw',ERROR:'re',FAULT:'rf'}[n]||'ri';}"
+        "function lv(n,b){al=n;document.querySelectorAll('.pl').forEach(function(p){p.classList.remove('on');});b.classList.add('on');rnd();}"
+        "function rnd(){"
+          "var q=(document.getElementById('q').value||'').toLowerCase();"
+          "var f=rw.filter(function(r){"
+            "if(al!='ALL'&&r.lv!=al)return false;"
+            "if(q&&(r.ts+r.lv+r.cat+r.ev+r.dt+r.v1+r.v2).toLowerCase().indexOf(q)<0)return false;"
+            "return true;});"
+          "document.getElementById('sc').textContent=f.length;"
+          "var MAX=500,s=f.slice(0,MAX);"
+          "document.getElementById('tb').innerHTML=s.map(function(r,i){"
+            "return'<tr class=\"'+rc(r.lv)+'\"><td style=\"color:#bbb;font-size:10px\">'+(f.length-i)+'</td>'"
+            "+'<td class=\"ts\">'+r.ts+'</td>'"
+            "+'<td><span class=\"bk '+lc(r.lv)+'\">'+r.lv+'</span></td>'"
+            "+'<td class=\"ct2\">'+r.cat+'</td>'"
+            "+'<td class=\"ev\">'+r.ev+'</td>'"
+            "+'<td class=\"dt\" title=\"'+r.dt+'\">'+r.dt+'</td>'"
+            "+'<td class=\"nm\">'+r.v1+'</td>'"
+            "+'<td class=\"nm\">'+r.v2+'</td></tr>';}).join('')"
+          "+(f.length>MAX?'<tr><td colspan=\"8\" style=\"text-align:center;padding:10px;color:#888;font-size:12px\">Showing newest '+MAX+' of '+f.length+' &mdash; download CSV for full log</td></tr>':'');}"
+        "function ld(){"
+          "document.getElementById('st').textContent='Loading…';"
+          "fetch('/api/log/data').then(function(r){return r.text();}).then(function(t){"
+            "rw=parse(t);"
+            "document.getElementById('fs').textContent=(t.length/1024).toFixed(1)+' KB';"
+            "document.getElementById('ec').textContent=rw.length;"
+            "if(rw.length)document.getElementById('lt').textContent='Latest: '+rw[0].ts;"
+            "document.getElementById('st').textContent='Updated '+new Date().toLocaleTimeString();"
+            "rnd();"
+          "}).catch(function(e){document.getElementById('st').textContent='Error: '+e;});"
+          "fetch('/api/log/archive_size').then(function(r){return r.json();}).then(function(d){document.getElementById('as').textContent=d.kb+' KB';}).catch(function(){document.getElementById('as').textContent='none';});}"
+        "function clr(){"
+          "if(!confirm('Delete ALL log entries? This cannot be undone.'))return;"
+          "fetch('/api/log/clear',{method:'POST'}).then(function(r){return r.json();}).then(function(d){"
+            "if(d.ok){rw=[];rnd();document.getElementById('st').textContent='Log cleared';"
+            "document.getElementById('ec').textContent='0';document.getElementById('fs').textContent='0 KB';}});}"
+        "ld();setInterval(ld,30000);"
+        "</script></body></html>";
+
+    httpServer.on("/log", HTTP_GET, []() {
+        httpServer.send(200, "text/html", LOG_PAGE);
+    });
+
+    httpServer.on("/api/log/data", HTTP_GET, []() {
+        File f = LittleFS.open("/logs/log.csv", "r");
+        if (!f) { httpServer.send(200, "text/plain", "Timestamp,Epoch,Level,Category,Event,Detail,Val1,Val2\n"); return; }
+        httpServer.sendHeader("Cache-Control", "no-store");
+        httpServer.streamFile(f, "text/plain");
+        f.close();
+    });
+
+    httpServer.on("/api/log/download", HTTP_GET, []() {
+        bool archive = httpServer.hasArg("archive");
+        const char* path = archive ? "/logs/log_old.csv" : "/logs/log.csv";
+        File f = LittleFS.open(path, "r");
+        if (!f) { httpServer.send(404, "text/plain", "no log"); return; }
+        const char* fname = archive ? "fuelstation_log_archive.csv" : "fuelstation_log.csv";
+        char cd[64];
+        snprintf(cd, sizeof(cd), "attachment; filename=\"%s\"", fname);
+        httpServer.sendHeader("Content-Disposition", cd);
+        httpServer.streamFile(f, "text/csv");
+        f.close();
+    });
+
+    httpServer.on("/api/log/archive_size", HTTP_GET, []() {
+        File f = LittleFS.open("/logs/log_old.csv", "r");
+        char buf[32];
+        if (f) {
+            snprintf(buf, sizeof(buf), "{\"kb\":%.1f}", f.size() / 1024.0f);
+            f.close();
+        } else {
+            strncpy(buf, "{\"kb\":0}", sizeof(buf));
+        }
+        httpServer.send(200, "application/json", buf);
+    });
+
+    httpServer.on("/api/log/clear", HTTP_POST, []() {
+        LittleFS.remove("/logs/log.csv");
+        LittleFS.remove("/logs/log_old.csv");
+        Logger_Init();   // recreate file with fresh header
+        httpServer.send(200, "application/json", "{\"ok\":true}");
     });
 
     httpServer.onNotFound(handleNotFound);

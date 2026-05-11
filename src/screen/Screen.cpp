@@ -72,6 +72,11 @@ static int        gModelScroll = 0;
 static char       gNetStaIP[24] = "";
 static char       gNetApIP[24]  = "";
 
+// Post-pump review state
+static bool gPostPump    = false;   // true = pump stopped, review screen shown
+static bool gPostIsDrain = false;   // remember fill vs drain for colour/restart
+static int  gPumpBtnSel  = 0;       // 0=STOP(running)/START(post), 1=BACK
+
 // ── Animated bar values ──────────────────────────────────────────
 static float animSupply   = 0.0f;
 static float animMain     = 0.0f;
@@ -305,18 +310,51 @@ static void renderLeftPanel(const ScreenData& d)
         spr.drawString(sns ? "SENSOR: YES" : "SENSOR: NO", LEFT_W / 2, nameY + 40);
     }
 
-    // STOP button — bottom of left panel, pump running only
-    if (d.pumpRunning) {
-        const int btnX = 8;
-        const int btnW = LEFT_W - 16;
-        const int btnH = 30;
-        const int btnY = MSG_Y - 8 - btnH;   // y=246
-        spr.fillRoundRect(btnX, btnY, btnW, btnH, 6, C_RED);
-        spr.drawRoundRect(btnX, btnY, btnW, btnH, 6, C_WHITE);
+    // Two-button row — pump running: [STOP*][BACK]  post-pump: [START][BACK*]
+    if (d.pumpRunning || gPostPump) {
+        const int btnY  = MSG_Y - 8 - 30;        // y=246
+        const int btnH  = 30;
+        const int btnX1 = 8;
+        const int btnX2 = 94;                     // 8 + 80 + 6
+        const int btnW  = 80;
+
         spr.setTextDatum(MC_DATUM);
         spr.setTextSize(2);
-        spr.setTextColor(C_WHITE, C_RED);
-        spr.drawString("STOP", btnX + btnW / 2, btnY + btnH / 2);
+
+        if (d.pumpRunning) {
+            // STOP — always highlighted while pump runs
+            spr.fillRoundRect(btnX1, btnY, btnW, btnH, 6, C_RED);
+            spr.drawRoundRect(btnX1, btnY, btnW, btnH, 6, C_WHITE);
+            spr.setTextColor(C_WHITE, C_RED);
+            spr.drawString("STOP", btnX1 + btnW / 2, btnY + btnH / 2);
+            // BACK — dim
+            spr.drawRoundRect(btnX2, btnY, btnW, btnH, 6, C_GREY);
+            spr.setTextColor(C_GREY, C_BG);
+            spr.drawString("BACK", btnX2 + btnW / 2, btnY + btnH / 2);
+        } else {
+            // START — highlighted if selected (gPumpBtnSel==0)
+            bool startSel = (gPumpBtnSel == 0);
+            if (startSel) {
+                spr.fillRoundRect(btnX1, btnY, btnW, btnH, 6, C_GREEN);
+                spr.drawRoundRect(btnX1, btnY, btnW, btnH, 6, C_WHITE);
+                spr.setTextColor(C_BG, C_GREEN);
+            } else {
+                spr.drawRoundRect(btnX1, btnY, btnW, btnH, 6, C_GREEN);
+                spr.setTextColor(C_GREEN, C_BG);
+            }
+            spr.drawString("START", btnX1 + btnW / 2, btnY + btnH / 2);
+            // BACK — highlighted if selected (gPumpBtnSel==1)
+            bool backSel = (gPumpBtnSel == 1);
+            if (backSel) {
+                spr.fillRoundRect(btnX2, btnY, btnW, btnH, 6, C_ACCENT);
+                spr.drawRoundRect(btnX2, btnY, btnW, btnH, 6, C_WHITE);
+                spr.setTextColor(C_BG, C_ACCENT);
+            } else {
+                spr.drawRoundRect(btnX2, btnY, btnW, btnH, 6, C_ACCENT);
+                spr.setTextColor(C_ACCENT, C_BG);
+            }
+            spr.drawString("BACK", btnX2 + btnW / 2, btnY + btnH / 2);
+        }
     }
 }
 
@@ -348,11 +386,12 @@ static void renderRightHome(const ScreenData& d)
     spr.fillRect(X, CONTENT_Y, W, CONTENT_H, C_BG);
 
     char buf[40];
-    bool isDrain = (d.msgColour == MSG_DRAINING);
+    // During post-pump review, use the remembered fill/drain type for colour
+    bool isDrain = d.pumpRunning ? (d.msgColour == MSG_DRAINING) : gPostIsDrain;
     uint16_t pumpCol = isDrain ? C_ORANGE : C_GREEN;
 
     // ── MODEL TANK (both modes) ───────────────────────────────────
-    if (d.pumpRunning && d.volumeMl > 0 &&
+    if ((d.pumpRunning || gPostPump) && d.volumeMl > 0 &&
         activeModelIndex >= 0 && heliModels[activeModelIndex].tankVolumeMl > 0) {
         snprintf(buf, sizeof(buf), "%d / %d ml",
                  d.volumeMl, heliModels[activeModelIndex].tankVolumeMl);
@@ -381,7 +420,7 @@ static void renderRightHome(const ScreenData& d)
     spr.drawFastHLine(X + 4, 130, W - 8, C_SEP);
 
     // ── Idle: 2 more bars + buttons ───────────────────────────────
-    if (!d.pumpRunning) {
+    if (!d.pumpRunning && !gPostPump) {
 
         snprintf(buf, sizeof(buf), "%d%%", (int)(animPressure + 0.5f));
         dataBar(X, 140, W, 14, "PRESSURE", animPressure, C_PURPLE, buf);
@@ -559,6 +598,8 @@ uint32_t Screen_GetScreenAge()  { return millis() - gScreenChgMs; }
 
 void Screen_SetScreen(ScreenID s)
 {
+    gPostPump   = false;
+    gPumpBtnSel = 0;
     if (s == gCurScreen) return;
     gCurScreen   = s;
     gScreenChgMs = millis();
@@ -566,11 +607,30 @@ void Screen_SetScreen(ScreenID s)
     if (s == SCREEN_HOME)  gActionSel   = 0;
 }
 
+void Screen_SetPostPump(bool isDrain)
+{
+    gPostPump    = true;
+    gPostIsDrain = isDrain;
+    gPumpBtnSel  = 1;   // BACK highlighted by default
+}
+
+void Screen_ClearPostPump()
+{
+    gPostPump   = false;
+    gPumpBtnSel = 0;
+}
+
+bool Screen_IsPostPump()    { return gPostPump; }
+int  Screen_GetPumpBtnSel() { return gPumpBtnSel; }
+
 void Screen_EncoderScroll(int delta)
 {
     switch (gCurScreen) {
         case SCREEN_HOME:
-            gActionSel = constrain(gActionSel + delta, 0, ACTION_COUNT - 1);
+            if (gPostPump)
+                gPumpBtnSel = constrain(gPumpBtnSel + delta, 0, 1);
+            else
+                gActionSel = constrain(gActionSel + delta, 0, ACTION_COUNT - 1);
             break;
         case SCREEN_MODEL:
             if (numModels > 0)
@@ -639,9 +699,10 @@ void Screen_Update(const ScreenData& data)
 
     switch (gCurScreen) {
         case SCREEN_HOME: {
-            const char* title = data.pumpRunning
-                ? (data.msgColour == MSG_DRAINING ? "DRAINING" : "FILLING")
-                : "HOME";
+            const char* title =
+                data.pumpRunning ? (data.msgColour == MSG_DRAINING ? "DRAINING" : "FILLING") :
+                gPostPump        ? (gPostIsDrain                   ? "DRAINING" : "FILLING") :
+                "HOME";
             renderHeader(title);
             renderLeftPanel(data);
             renderRightHome(data);

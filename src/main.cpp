@@ -63,6 +63,7 @@ static uint8_t lowBattCount = 0;
 
 // ── Screen data ───────────────────────────────────────────────────
 static ScreenData gDisplay;
+static bool gLastPumpWasDrain = false;   // for post-pump START restart
 
 // ── Message helpers ───────────────────────────────────────────────
 static void SetMessage(const char* msg, uint16_t colour)
@@ -425,6 +426,8 @@ void OnWebCommand(const String& raw)
 void BeginFill()
 {
     if (lowBatteryLatched) return;
+    gLastPumpWasDrain = false;
+    Screen_ClearPostPump();
     if (!fillCalActive && heliModels[activeModelIndex].hasTankSensor && !Sensors_IsTankSensorFitted()) {
         SetMessage("Connect Tank Full Sensor", MSG_WARN);
         return;
@@ -451,7 +454,8 @@ void BeginFill()
 void BeginDrain()
 {
     if (lowBatteryLatched) return;
-
+    gLastPumpWasDrain = true;
+    Screen_ClearPostPump();
     noInterrupts(); drainPulses = 0; interrupts();
     lastDrainVolumeMl      = 0;
     targetDrainMl          = heliModels[activeModelIndex].tankVolumeMl;
@@ -536,7 +540,7 @@ void BeginOverflowPurge()
         HeliLib_Save(activeModelIndex);
         SetMessage("Complete", MSG_COMPLETE);
         autoFillSequence = AF_NONE;
-        Screen_SetScreen(SCREEN_HOME);
+        Screen_SetPostPump(false);
         return;
     }
     autoFillSequence = AF_PURGING;
@@ -599,7 +603,7 @@ static void UpdateDrainFlow(uint32_t now)
             heliModels[activeModelIndex].totalDrainMl += (uint32_t)lastDrainVolumeMl;
             HeliLib_Save(activeModelIndex);
             SetMessage("Tank was empty", MSG_WARN);
-            Screen_SetScreen(SCREEN_HOME);
+            Screen_SetPostPump(true);
             return;
         }
         int thresh = drainPeakFlowMlMin * (100 - tankEmptyFlowDropPct) / 100;
@@ -616,7 +620,7 @@ static void UpdateDrainFlow(uint32_t now)
                 } else {
                     SetMessage("Tank empty", MSG_COMPLETE);
                     autoFillSequence = AF_NONE;
-                    Screen_SetScreen(SCREEN_HOME);
+                    Screen_SetPostPump(true);
                 }
             }
         } else tankEmptyCount = 0;
@@ -650,7 +654,7 @@ static void UpdateAutoSequence(uint32_t now)
             heliModels[activeModelIndex].totalFillMl += (uint32_t)lastFillVolumeMl;
             HeliLib_Save(activeModelIndex);
             SetMessage("Complete", MSG_COMPLETE);
-            Screen_SetScreen(SCREEN_HOME);
+            Screen_SetPostPump(false);
         }
     }
 }
@@ -741,7 +745,25 @@ void OnShortPress()
     lastPressMs = now;
 
     if (PumpEnabled) {
+        // STOP is always highlighted while pump runs — button always stops
         StopFill();
+        bool wasDrain = drainClosedLoopActive || (autoFillSequence == AF_PURGING);
+        Screen_SetPostPump(wasDrain);
+        Power_UpdateActivity();
+        return;
+    }
+
+    if (Screen_IsPostPump()) {
+        int sel = Screen_GetPumpBtnSel();
+        if (sel == 0) {
+            // START selected — restart same operation
+            if (gLastPumpWasDrain) BeginDrain();
+            else                   BeginFill();
+        } else {
+            // BACK selected — return to HOME
+            Screen_ClearPostPump();
+            Screen_SetScreen(SCREEN_HOME);
+        }
         Power_UpdateActivity();
         return;
     }
@@ -779,8 +801,14 @@ void OnBackPress()
 {
     if (PumpEnabled) {
         StopFill();
+        // Long-hold back while pumping = stop and go straight home
+        Screen_ClearPostPump();
+        Screen_SetScreen(SCREEN_HOME);
         Power_UpdateActivity();
         return;
+    }
+    if (Screen_IsPostPump()) {
+        Screen_ClearPostPump();
     }
     Screen_SetScreen(SCREEN_HOME);
     Power_UpdateActivity();

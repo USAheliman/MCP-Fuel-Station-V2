@@ -60,3 +60,9 @@ void     Screen_EncoderScroll(int delta);
 void     Screen_EncoderPress();
 void     Screen_SetNetworkIP(const char* staIP, const char* apIP);
 int      Screen_GetActionSel();
+
+// Post-pump review — stay on fill/drain screen after pump stops
+void     Screen_SetPostPump(bool isDrain);  // enter: shows START+BACK, BACK highlighted
+void     Screen_ClearPostPump();            // exit: reset to idle HOME state
+bool     Screen_IsPostPump();
+int      Screen_GetPumpBtnSel();            // 0=STOP(pump on) or START(post-pump), 1=BACK

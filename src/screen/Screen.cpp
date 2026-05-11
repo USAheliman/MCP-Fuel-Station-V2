@@ -588,6 +588,13 @@ static void renderNetwork()
     spr.setTextSize(1);
     spr.setTextColor(C_GREY, C_BG);
     spr.drawString("Open browser to configure or update firmware", SCR_W / 2, y);
+
+    y += 24;
+    spr.setTextColor(C_GREY, C_BG);
+    spr.drawString("Event Log:", SCR_W / 2, y);
+    y += 16;
+    spr.setTextColor(C_ACCENT, C_BG);
+    spr.drawString("fuelstation.local/log", SCR_W / 2, y);
 }
 
 // ════════════════════════════════════════════════════════════════

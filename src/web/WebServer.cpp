@@ -434,6 +434,7 @@ void WebServer_Init()
         "<a class='btn b' href='/api/log/download?archive=1'>&#8615; Archive</a>"
         "<button class='btn r' onclick='clr()'>&#128465; Clear</button>"
         "<button class='btn d' onclick='ld()'>&#8635; Refresh</button>"
+        "&nbsp;<a class='btn' style='background:#34495e;color:#fff' href='/'>&#8592; Fuel Station</a>"
         "</div>"
         "<div class='wr'><table>"
         "<thead><tr><th>#</th><th>Timestamp</th><th>Level</th><th>Category</th><th>Event</th><th>Detail</th><th>Val 1</th><th>Val 2</th></tr></thead>"
@@ -672,8 +673,28 @@ static void handleRoot()
         f.close();
     } else {
         httpServer.send(200, "text/html",
-            "<h2>MCP Fuel Station V2</h2>"
-            "<p><a href='/ota'>OTA Firmware Update</a></p>");
+            "<!DOCTYPE html><html><head>"
+            "<meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>MCP Fuel Station</title>"
+            "<style>"
+            "*{box-sizing:border-box;margin:0;padding:0}"
+            "body{font-family:system-ui,sans-serif;background:#1a1a2e;color:#fff;"
+                 "display:flex;flex-direction:column;align-items:center;justify-content:center;"
+                 "min-height:100vh;padding:24px}"
+            "h1{color:#e74c3c;font-size:26px;margin-bottom:6px}"
+            ".sub{color:#7f8c8d;font-size:13px;margin-bottom:36px}"
+            ".btn{display:block;width:260px;padding:15px 0;border-radius:8px;"
+                 "text-decoration:none;font-size:16px;font-weight:600;"
+                 "text-align:center;margin:10px 0}"
+            ".ota{background:#c0392b;color:#fff}"
+            ".log{background:#27ae60;color:#fff}"
+            "</style></head><body>"
+            "<h1>&#9981; MCP Fuel Station</h1>"
+            "<p class='sub'>" FW_VERSION "</p>"
+            "<a class='btn ota' href='/ota'>&#8679; OTA Firmware Update</a>"
+            "<a class='btn log' href='/log'>&#128203; Event Log</a>"
+            "</body></html>");
     }
 }
 

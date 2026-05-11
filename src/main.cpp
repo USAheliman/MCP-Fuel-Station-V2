@@ -754,6 +754,8 @@ static void encoderPoll()
     lastScrollMs = now;
     Power_UpdateActivity();
 
+    if (Power_IsStandby()) { Power_ExitStandby(); acc = 0; return; }
+
     if (PumpEnabled) {
         // During fill/drain: encoder adjusts pump speed in 50 ml/min steps
         const int step = 50;

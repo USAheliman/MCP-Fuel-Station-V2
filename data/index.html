@@ -383,6 +383,7 @@
   <button class="nav-btn"        ontouchstart="event.preventDefault();showPage('setup')"   onclick="showPage('setup')">SETUP</button>
   <button class="nav-btn"        ontouchstart="event.preventDefault();showPage('station')" onclick="showPage('station')">STATION</button>
   <button class="nav-btn"        ontouchstart="event.preventDefault();window.location.href='/log'" onclick="window.location.href='/log'">LOG</button>
+  <button class="nav-btn" id="nav-help" style="color:var(--accent);border:1px solid var(--accent);border-radius:4px;margin-left:auto" ontouchstart="event.preventDefault();showHelp()" onclick="showHelp()">?&nbsp;HELP</button>
   <button class="nav-btn" id="nav-lowbat" style="display:none" ontouchstart="event.preventDefault();showPage('lowbat')" onclick="showPage('lowbat')">⚠ BATT</button>
 </div>
 
@@ -418,10 +419,6 @@
     <div class="val-row">
       <span class="val-label">Pack voltage</span>
       <span class="val-value accent" id="main-packv">—</span>
-    </div>
-    <div class="val-row">
-      <span class="val-label">Current</span>
-      <span class="val-value accent" id="main-current">—</span>
     </div>
   </div>
 
@@ -494,10 +491,6 @@
       <span class="val-label">Pack voltage</span>
       <span class="val-value accent" id="fill-packv">—</span>
     </div>
-    <div class="val-row">
-      <span class="val-label">Current</span>
-      <span class="val-value accent" id="fill-current">—</span>
-    </div>
   </div>
 
   <div class="card">
@@ -565,10 +558,6 @@
     <div class="val-row">
       <span class="val-label">Pack voltage</span>
       <span class="val-value accent" id="drain-packv">—</span>
-    </div>
-    <div class="val-row">
-      <span class="val-label">Current</span>
-      <span class="val-value accent" id="drain-current">—</span>
     </div>
   </div>
 
@@ -1414,12 +1403,6 @@ function updateUI(s) {
     set('fill-packv', s.packV + 'V');
     set('drain-packv', s.packV + 'V');
   }
-  if (s.currentA) {
-    set('main-current', s.currentA + 'A');
-    set('fill-current', s.currentA + 'A');
-    set('drain-current', s.currentA + 'A');
-  }
-
   // Model params on main page
   if (s.tankVol)    set('main-tank-vol',   s.tankVol + 'ml');
   if (s.sensor)     set('main-sensor',     s.sensor);
@@ -1600,6 +1583,201 @@ function renderModelList(models, activeIdx, previewIdx) {
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 connectWS();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HELP SYSTEM
+// ═══════════════════════════════════════════════════════════════════════════
+const helpContent = {
+  main: `
+    <h3>Main Dashboard</h3>
+    <p>Live overview of the fuel station status. Updates automatically via WebSocket.</p>
+    <h4>Battery</h4>
+    <ul>
+      <li><strong>Pack Voltage</strong> — Total voltage across all cells combined</li>
+      <li><strong>Cell Voltage</strong> — Average per-cell voltage (healthy: 3.7–4.2 V)</li>
+      <li><strong>State of Charge %</strong> — Estimated from LiPo discharge curve</li>
+      <li>If any cell drops below the cutoff threshold the pump is disabled automatically and a LOW BATTERY warning is shown</li>
+    </ul>
+    <h4>Supply Tank</h4>
+    <ul>
+      <li>Shows remaining fuel volume and percentage</li>
+      <li>Estimated from flow meter pulses during fill and drain operations</li>
+      <li>Turns red when below the Low Threshold — refill supply and use <em>Station → Full Refill</em> to reset</li>
+    </ul>
+    <h4>Model Parameters</h4>
+    <ul>
+      <li>Shows the active helicopter model with its tank volume, speeds and sensor setting</li>
+      <li>Change the active model from the <strong>Setup</strong> tab</li>
+    </ul>`,
+
+  fill: `
+    <h3>Fill Operation</h3>
+    <p>Pumps fuel from the supply tank into the helicopter fuel tank.</p>
+    <h4>Starting a Fill</h4>
+    <ul>
+      <li>Ensure the correct helicopter model is selected in <strong>Setup</strong></li>
+      <li>Press <strong>START FILL</strong> — the pump starts at the model's fill speed</li>
+      <li>Use the <strong>Speed slider</strong> to adjust flow rate (ml/min) during filling</li>
+    </ul>
+    <h4>Auto-Stop</h4>
+    <ul>
+      <li>If a <strong>Tank-full sensor</strong> is fitted: stops when the sensor triggers</li>
+      <li>If no sensor: stops when the <strong>target volume</strong> (tank capacity) is reached</li>
+      <li>After auto-stop, a <strong>purge cycle</strong> may run briefly to drain the fuel lines (duration set per model in Setup)</li>
+    </ul>
+    <h4>Manual Stop</h4>
+    <ul>
+      <li>Press <strong>STOP</strong> at any time to immediately cut the pump</li>
+      <li>Volume pumped is logged and deducted from the supply tank</li>
+    </ul>
+    <h4>Battery &amp; Supply</h4>
+    <ul>
+      <li>Fill is blocked if the battery is latched low — clear the latch in <em>Station → Battery</em></li>
+      <li>Supply tank depletes by the volume pumped; refill and reset from the Station tab</li>
+    </ul>`,
+
+  drain: `
+    <h3>Drain Operation</h3>
+    <p>Pumps fuel from the helicopter fuel tank back into the supply tank.</p>
+    <h4>Starting a Drain</h4>
+    <ul>
+      <li>Press <strong>START DRAIN</strong> — the pump starts at the model's drain speed</li>
+      <li>Use the <strong>Speed slider</strong> to adjust flow rate (ml/min) during draining</li>
+    </ul>
+    <h4>Auto Empty Detection</h4>
+    <ul>
+      <li>Continuously monitors flow rate during the drain</li>
+      <li>Once the peak flow is established, if flow drops more than the <strong>Flow Drop %</strong> below peak, the tank is declared empty and the pump stops</li>
+      <li><strong>Flow Drop %</strong> and <strong>Min Run Time</strong> are configurable in <em>Station → Tank Empty Detection</em></li>
+    </ul>
+    <h4>Manual Stop</h4>
+    <ul>
+      <li>Press <strong>STOP</strong> at any time to immediately cut the pump</li>
+    </ul>
+    <h4>Auto Drain + Fill</h4>
+    <ul>
+      <li>The station supports a combined drain-then-fill sequence</li>
+      <li>Start from the physical screen or the physical button on the station</li>
+    </ul>`,
+
+  setup: `
+    <h3>Setup &amp; Model Configuration</h3>
+    <h4>Helicopter Models</h4>
+    <ul>
+      <li>Each model stores its own fuel volume, pump speeds and sensor setting</li>
+      <li>Tap a model name to edit its settings; tap <strong>+ ADD MODEL</strong> to create one</li>
+      <li>The <strong>active model</strong> (highlighted) is used for all fill and drain operations</li>
+    </ul>
+    <h4>Model Settings</h4>
+    <ul>
+      <li><strong>Tank Volume (ml)</strong> — Total fuel capacity of the helicopter tank</li>
+      <li><strong>Fill Speed (ml/min)</strong> — Target fill flow rate</li>
+      <li><strong>Drain Speed (ml/min)</strong> — Target drain flow rate</li>
+      <li><strong>Purge Time (s)</strong> — Seconds to run drain pump after fill completes, to clear fuel lines. Set to 0 to disable.</li>
+      <li><strong>Tank Sensor</strong> — Enable if a tank-full sensor connector is fitted on this model. Provides more accurate fill stop.</li>
+    </ul>
+    <h4>Flow Meter Calibration</h4>
+    <ul>
+      <li>Calibration sets the <em>pulses per litre</em> value so volume readings are accurate</li>
+      <li><strong>Fill Cal:</strong> Press Start, pump a measured volume into a measuring cylinder, press Stop, enter the measured ml</li>
+      <li><strong>Drain Cal:</strong> Same process using the drain pump</li>
+      <li>Calibration values are saved to flash and persist across power cycles</li>
+    </ul>`,
+
+  station: `
+    <h3>Station Management</h3>
+    <h4>Supply Tank</h4>
+    <ul>
+      <li><strong>Full Refill</strong> — Marks the supply tank as completely full after a manual refill</li>
+      <li><strong>Capacity</strong> — Total supply tank volume in litres</li>
+      <li><strong>Low Threshold</strong> — Volume level at which a low-supply warning is shown</li>
+    </ul>
+    <h4>Tank Empty Detection</h4>
+    <ul>
+      <li><strong>Flow Drop %</strong> — How far flow must fall below peak (%) to declare tank empty. Lower = more sensitive.</li>
+      <li><strong>Min Run Time (s)</strong> — Minimum drain time before empty detection is active (allows pump to reach steady flow first)</li>
+    </ul>
+    <h4>Battery Cutoff</h4>
+    <ul>
+      <li><strong>Cutoff Voltage (V/cell)</strong> — Per-cell voltage below which the pump is disabled. Recommended: 3.75–3.82 V</li>
+      <li>If the low-battery latch triggers, clear it here to re-enable the pump after charging</li>
+    </ul>
+    <h4>OTA Firmware Update</h4>
+    <ul>
+      <li>Upload a new firmware .bin file over WiFi — no USB cable needed</li>
+      <li>Must be connected via home WiFi (not just AP mode) for OTA</li>
+      <li>The device reboots automatically after a successful update</li>
+      <li>OTA activity is recorded in the event log</li>
+    </ul>
+    <h4>Station Statistics</h4>
+    <ul>
+      <li>Total fills, drains and fuel volume across all helicopter models</li>
+      <li>Per-model stats shown in the Setup tab</li>
+    </ul>`,
+
+  log: `
+    <h3>Event Log</h3>
+    <p>Comprehensive timestamped log of all station activity, stored in flash memory.</p>
+    <h4>Colour Coding</h4>
+    <ul>
+      <li style="color:#2ecc71"><strong>INFO</strong> — Normal operation (green)</li>
+      <li style="color:#f39c12"><strong>WARN</strong> — Advisory or degraded condition (orange)</li>
+      <li style="color:#e74c3c"><strong>ERROR</strong> — Recoverable fault (red)</li>
+      <li style="color:#9b59b6"><strong>FAULT</strong> — Serious fault or crash (purple)</li>
+    </ul>
+    <h4>Key Events</h4>
+    <ul>
+      <li><strong>BOOT</strong> — Device started: firmware version and reset reason</li>
+      <li><strong>PUMP_INTERRUPTED</strong> — Pump was running when power was cut (operation + volume at time of loss)</li>
+      <li><strong>BROWNOUT</strong> — Supply voltage collapsed mid-operation (overcurrent?)</li>
+      <li><strong>FILL_START / FILL_COMPLETE</strong> — Fill began / completed with model and volume</li>
+      <li><strong>DRAIN_COMPLETE / DRAIN_EMPTY</strong> — Drain result with volume pumped</li>
+      <li><strong>BATT_LOW</strong> — Battery cutoff triggered; pump disabled</li>
+      <li><strong>WIFI_CONNECTED / NTP_SYNC</strong> — Network events</li>
+      <li><strong>OTA_UPLOAD / OTA_INSTALL</strong> — Firmware update activity</li>
+    </ul>
+    <h4>Download &amp; Archive</h4>
+    <ul>
+      <li>Click <strong>Download CSV</strong> to save the log — opens directly in Excel</li>
+      <li>Log auto-rotates at 512 KB; the previous log (archive) is also downloadable</li>
+      <li><strong>Clear Log</strong> permanently deletes the current log (cannot be undone)</li>
+    </ul>`
+};
+
+function showHelp() {
+  const page = currentPage === 'lowbat' ? 'main' : currentPage;
+  const content = helpContent[page] || helpContent['main'];
+  document.getElementById('help-title').textContent = 'HELP — ' + page.toUpperCase();
+  document.getElementById('help-body').innerHTML = content;
+  document.getElementById('help-modal').style.display = 'flex';
+}
+function closeHelp() {
+  document.getElementById('help-modal').style.display = 'none';
+}
+// Close on backdrop click
+document.getElementById('help-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeHelp();
+});
 </script>
+
+<!-- ═══════════════════════════════════ HELP MODAL ══════════════════════════ -->
+<div id="help-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;align-items:center;justify-content:center;padding:12px">
+  <div style="background:#0d1b2e;border:1px solid var(--accent);border-radius:12px;max-width:680px;width:100%;max-height:90vh;display:flex;flex-direction:column;overflow:hidden">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #1a2e4a">
+      <span id="help-title" style="color:var(--accent);font-size:15px;font-weight:700;letter-spacing:1px"></span>
+      <button onclick="closeHelp()" style="background:none;border:1px solid #334;color:var(--text2);font-size:18px;cursor:pointer;padding:2px 10px;border-radius:4px">&times;</button>
+    </div>
+    <div id="help-body" style="padding:16px 20px;overflow-y:auto;font-size:13px;line-height:1.7;color:var(--text);"></div>
+  </div>
+</div>
+<style>
+#help-body h3 { color:var(--accent); margin:0 0 10px; font-size:15px; }
+#help-body h4 { color:var(--text); margin:14px 0 6px; font-size:13px; border-bottom:1px solid #1a2e4a; padding-bottom:4px; }
+#help-body ul { margin:4px 0 8px 18px; padding:0; }
+#help-body li { margin-bottom:5px; color:var(--text2); }
+#help-body li strong { color:var(--text); }
+#help-body p  { color:var(--text2); margin:0 0 10px; }
+#help-body em { color:var(--accent); font-style:normal; }
+</style>
 </body>
 </html>

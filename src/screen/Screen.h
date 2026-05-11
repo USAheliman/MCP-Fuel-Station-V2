@@ -11,7 +11,8 @@ enum ScreenID {
     SCREEN_HOME  = 0,
     SCREEN_MODEL = 1,
     SCREEN_NET   = 2,
-    SCREEN_COUNT = 3
+    SCREEN_HELP  = 3,
+    SCREEN_COUNT = 4
 };
 
 // ── Action button indices (HOME idle button strip) ───────────────
@@ -19,7 +20,8 @@ enum ScreenID {
 #define ACTION_DRAIN   1
 #define ACTION_MODEL   2
 #define ACTION_NET     3
-#define ACTION_COUNT   4
+#define ACTION_HELP    4
+#define ACTION_COUNT   5
 
 // ── Message bar colours (RGB565) ─────────────────────────────────
 #define MSG_IDLE     0x07FF   // cyan

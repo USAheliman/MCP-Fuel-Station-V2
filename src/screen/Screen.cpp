@@ -29,7 +29,7 @@ static TFT_eSprite spr(&tft);
 #define SCR_W     480
 #define SCR_H     320
 #define HDR_H      36
-#define MSG_H      36
+#define MSG_H      24
 #define CONTENT_Y  HDR_H
 #define CONTENT_H  (SCR_H - HDR_H - MSG_H)   // 248
 #define MSG_Y      (SCR_H - MSG_H)            // 284
@@ -73,6 +73,7 @@ static int        gActionSel   = 0;
 static int        gModelScroll = 0;
 static char       gNetStaIP[24] = "";
 static char       gNetApIP[24]  = "";
+static ScreenID   gHelpFromScreen = SCREEN_HOME;
 
 // Post-pump review state
 static bool gPostPump    = false;   // true = pump stopped, review screen shown
@@ -247,6 +248,7 @@ static void renderHeader(const char* title)
 
 // ════════════════════════════════════════════════════════════════
 // Message bar — drawn on every screen (bottom strip)
+// Layout: [?] 48px | separator | message text
 // ════════════════════════════════════════════════════════════════
 static void renderMsgBar(const ScreenData& d)
 {
@@ -254,7 +256,6 @@ static void renderMsgBar(const ScreenData& d)
     uint16_t fg = d.msgColour;
 
     if (d.pumpRunning) {
-        // Pulse background gently in pump accent colour
         float f = 0.35f + 0.25f * sinf(millis() * 0.004f);
         uint8_t r = (uint8_t)(((d.msgColour >> 11) & 0x1F) * f);
         uint8_t g = (uint8_t)(((d.msgColour >>  5) & 0x3F) * f);
@@ -265,10 +266,27 @@ static void renderMsgBar(const ScreenData& d)
 
     spr.fillRect(0, MSG_Y, SCR_W, MSG_H, bg);
     spr.drawFastHLine(0, MSG_Y, SCR_W, C_GREY);
+
+    // Help button — left 46px, highlighted when HELP action is selected
+    bool helpSel = (gCurScreen == SCREEN_HOME && gActionSel == ACTION_HELP)
+                || (gCurScreen == SCREEN_HELP);
+    uint16_t hBg = helpSel ? C_ACCENT : bg;
+    uint16_t hFg = helpSel ? C_BG    : C_ACCENT;
+    if (helpSel) spr.fillRoundRect(3, MSG_Y + 3, 40, MSG_H - 6, 4, hBg);
+    spr.drawRoundRect(3, MSG_Y + 3, 40, MSG_H - 6, 4, C_ACCENT);
+    spr.setTextDatum(MC_DATUM);
+    spr.setTextSize(2);
+    spr.setTextColor(hFg, hBg);
+    spr.drawString("?", 23, MSG_Y + MSG_H / 2);
+
+    // Vertical separator
+    spr.drawFastVLine(48, MSG_Y + 2, MSG_H - 4, C_GREY);
+
+    // Message text — centred in remaining strip
     spr.setTextDatum(MC_DATUM);
     spr.setTextSize(2);
     spr.setTextColor(fg, bg);
-    spr.drawString(d.message, SCR_W / 2, MSG_Y + MSG_H / 2);
+    spr.drawString(d.message, (48 + SCR_W) / 2, MSG_Y + MSG_H / 2);
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -437,13 +455,15 @@ static void renderRightHome(const ScreenData& d)
         snprintf(buf, sizeof(buf), "%d%%", d.battPct);
         dataBar(X, 192, W, 14, "BATTERY", animBatt, battCol(animBatt), buf);
 
-        // Action buttons
-        static const char*     kLabels[ACTION_COUNT]  = { "FILL", "DRAIN", "MODEL", "NET" };
-        static const uint16_t  kAccent[ACTION_COUNT]  = { C_GREEN, C_ORANGE, C_BLUE, C_ACCENT };
+        // Action buttons — draw 4 (FILL/DRAIN/MODEL/NET); 5th scroll position
+        // activates the "?" help button in the message bar instead.
+        static const char*     kLabels[ACTION_COUNT]  = { "FILL", "DRAIN", "MODEL", "NET", "HELP" };
+        static const uint16_t  kAccent[ACTION_COUNT]  = { C_GREEN, C_ORANGE, C_BLUE, C_ACCENT, C_YELLOW };
+        const int BTN_DRAW = ACTION_COUNT - 1;   // 4 visible buttons
         const int BTN_Y  = 250;
         const int BTN_H  = 28;
-        int slot = (W - 12) / ACTION_COUNT;   // ~71 px per slot
-        for (int i = 0; i < ACTION_COUNT; i++) {
+        int slot = (W - 12) / BTN_DRAW;          // ~71 px per slot
+        for (int i = 0; i < BTN_DRAW; i++) {
             int bx  = X + 6 + i * slot;
             int bw  = slot - 4;
             bool sel = (i == gActionSel);
@@ -553,6 +573,139 @@ static void renderModelBrowser()
 }
 
 // ════════════════════════════════════════════════════════════════
+// Screen: HELP — context-sensitive, set by gHelpFromScreen
+// ════════════════════════════════════════════════════════════════
+
+// Index matches helpContext() return value:
+//   0 = HOME idle   1 = HOME filling   2 = HOME draining
+//   3 = MODEL browser   4 = NETWORK
+static const char* const kHelpLines[5][16] = {
+    { // 0 — HOME (idle)
+      "  HOME SCREEN",
+      "",
+      "  Encoder scrolls through actions.",
+      "  Press button to activate.",
+      "",
+      "  FILL   Fill helicopter fuel tank",
+      "  DRAIN  Drain fuel from tank",
+      "  MODEL  Select active helicopter",
+      "  NET    Network & web access",
+      "  HELP   Show this help screen",
+      "",
+      "  Status bars: Model tank, Supply,",
+      "  Pressure & Battery level.",
+      nullptr, nullptr, nullptr
+    },
+    { // 1 — HOME filling
+      "  FILL OPERATION",
+      "",
+      "  Filling the helicopter fuel tank.",
+      "  Auto-stops when:",
+      "   Tank-full sensor triggers, or",
+      "   Target volume is reached.",
+      "",
+      "  ENCODER  Adjust pump speed",
+      "  BUTTON   Stop pump immediately",
+      "",
+      "  After stop:",
+      "  START to refill,  BACK for Home.",
+      nullptr, nullptr, nullptr, nullptr
+    },
+    { // 2 — HOME draining
+      "  DRAIN OPERATION",
+      "",
+      "  Draining the helicopter fuel tank.",
+      "  Auto-stops when tank is empty",
+      "  (flow rate drops sharply).",
+      "",
+      "  ENCODER  Adjust pump speed",
+      "  BUTTON   Stop pump immediately",
+      "",
+      "  After stop:",
+      "  START to re-drain, BACK for Home.",
+      "",
+      "  Flow threshold set in web Setup.",
+      nullptr, nullptr, nullptr
+    },
+    { // 3 — MODEL browser
+      "  MODEL BROWSER",
+      "",
+      "  ENCODER    Scroll models",
+      "  BUTTON     Select (activate) model",
+      "  LONG PRESS Return to Home",
+      "",
+      "  Each entry shows:",
+      "   Tank volume in ml",
+      "   Fill & Drain speed (ml/min)",
+      "   Purge time & sensor status",
+      "   Total fills and volume pumped",
+      "",
+      "  ACTIVE = currently selected.",
+      "  Full setup via web interface.",
+      nullptr, nullptr
+    },
+    { // 4 — NETWORK
+      "  NETWORK & WEB ACCESS",
+      "",
+      "  Access Point (always active):",
+      "   SSID: MCP-FuelStation-V2",
+      "   URL:  fuelstation.local",
+      "",
+      "  Home WiFi: IP shown when live.",
+      "   Same URL works home network.",
+      "",
+      "  WEB PAGES at fuelstation.local:",
+      "   Main    Status dashboard",
+      "   Fill/Drain  Pump control",
+      "   Setup   Models & calibration",
+      "   Station Stats & OTA update",
+      "   Log     fuelstation.local/log",
+      nullptr
+    }
+};
+
+static int helpContext()
+{
+    if (gHelpFromScreen == SCREEN_MODEL) return 3;
+    if (gHelpFromScreen == SCREEN_NET)   return 4;
+    if (gLastData.pumpRunning || gPostPump)
+        return (gLastData.msgColour == MSG_DRAINING || gPostIsDrain) ? 2 : 1;
+    return 0;
+}
+
+static void renderHelp()
+{
+    spr.fillRect(0, CONTENT_Y, SCR_W, CONTENT_H, C_BG);
+
+    // "Press encoder to return" hint
+    spr.setTextDatum(TC_DATUM);
+    spr.setTextSize(1);
+    spr.setTextColor(C_GREY, C_BG);
+    spr.drawString("Press encoder button to return", SCR_W / 2, CONTENT_Y + 6);
+    spr.drawFastHLine(16, CONTENT_Y + 18, SCR_W - 32, C_SEP);
+
+    const char* const* lines = kHelpLines[helpContext()];
+    int y = CONTENT_Y + 26;
+
+    for (int i = 0; i < 16 && lines[i] != nullptr; i++) {
+        if (y + 16 > MSG_Y - 4) break;
+        if (lines[i][0] == '\0') {
+            y += 8;
+            continue;
+        }
+        bool isTitle = (i == 0);
+        bool isSub   = (lines[i][0] == ' ' && lines[i][1] == ' ' &&
+                        lines[i][2] == ' ');  // 3+ leading spaces
+        uint16_t col = isTitle ? C_ACCENT : (isSub ? C_GREY : C_WHITE);
+        spr.setTextDatum(TL_DATUM);
+        spr.setTextSize(2);
+        spr.setTextColor(col, C_BG);
+        spr.drawString(lines[i], 8, y);
+        y += 18;
+    }
+}
+
+// ════════════════════════════════════════════════════════════════
 // Screen: NETWORK / OTA
 //
 //  Two side-by-side cards (y=44, h=112):
@@ -657,8 +810,12 @@ uint32_t Screen_GetScreenAge()  { return millis() - gScreenChgMs; }
 
 void Screen_SetScreen(ScreenID s)
 {
-    gPostPump   = false;
-    gPumpBtnSel = 0;
+    if (s == SCREEN_HELP)
+        gHelpFromScreen = gCurScreen;   // remember which screen opened help
+    else {
+        gPostPump   = false;
+        gPumpBtnSel = 0;
+    }
     if (s == gCurScreen) return;
     gCurScreen   = s;
     gScreenChgMs = millis();
@@ -701,6 +858,12 @@ void Screen_EncoderScroll(int delta)
 
 void Screen_EncoderPress()
 {
+    if (gCurScreen == SCREEN_HELP) {
+        // Return to wherever help was opened from
+        gCurScreen   = gHelpFromScreen;
+        gScreenChgMs = millis();
+        return;
+    }
     if (gCurScreen == SCREEN_MODEL) {
         activeModelIndex = gModelScroll;
         Screen_SetScreen(SCREEN_HOME);
@@ -794,6 +957,10 @@ void Screen_Update(const ScreenData& data)
         case SCREEN_NET:
             renderHeader("NETWORK / OTA");
             renderNetwork();
+            break;
+        case SCREEN_HELP:
+            renderHeader("HELP");
+            renderHelp();
             break;
         default: break;
     }

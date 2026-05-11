@@ -821,6 +821,7 @@ void OnShortPress()
                 case ACTION_DRAIN: BeginDrain(); break;
                 case ACTION_MODEL: Screen_SetScreen(SCREEN_MODEL); break;
                 case ACTION_NET:   Screen_SetScreen(SCREEN_NET);   break;
+                case ACTION_HELP:  Screen_SetScreen(SCREEN_HELP);  break;
             }
             break;
         }
@@ -833,6 +834,9 @@ void OnShortPress()
             break;
         case SCREEN_NET:
             Screen_SetScreen(SCREEN_HOME);
+            break;
+        case SCREEN_HELP:
+            Screen_EncoderPress();   // returns to from-screen
             break;
         default:
             Screen_SetScreen(SCREEN_HOME);

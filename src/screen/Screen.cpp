@@ -44,6 +44,11 @@ static TFT_eSprite spr(&tft);
 #define PHOTO_X    ((LEFT_W - PHOTO_W) / 2)   // 11
 #define PHOTO_Y    (CONTENT_Y + 8)            // 44
 
+// Model browser card layout (3 cards × 82px = 246px within CONTENT_H=248)
+#define THUMB_W    40
+#define THUMB_H    30
+#define MB_CARD_H  82
+
 // ════════════════════════════════════════════════════════════════
 // Colour palette (RGB565)
 // ════════════════════════════════════════════════════════════════
@@ -70,7 +75,10 @@ static ScreenID   gCurScreen   = SCREEN_HOME;
 static uint32_t   gScreenChgMs = 0;
 static ScreenData gLastData;
 static int        gActionSel   = 0;
-static int        gModelScroll = 0;
+static int        gModelScroll  = 0;
+static int        gBrowserStart = 0;   // first visible card index
+static uint16_t   gThumbBuf[4][THUMB_W * THUMB_H];
+static int        gThumbIdx[4] = {-1, -1, -1, -1};
 static char       gNetStaIP[24] = "";
 static char       gNetApIP[24]  = "";
 static ScreenID   gHelpFromScreen = SCREEN_HOME;
@@ -97,6 +105,11 @@ static uint16_t* photoBuf       = nullptr;
 static char      photoModel[24] = "";
 static bool      photoHasImage  = false;
 static bool      gCapturing     = false;
+
+// Active JPEG decode target — set before each TJpgDec call
+static uint16_t* gJpgBuf  = nullptr;
+static int       gJpgBufW = PHOTO_W;
+static int       gJpgBufH = PHOTO_H;
 
 // ════════════════════════════════════════════════════════════════
 // Colour helpers
@@ -164,14 +177,14 @@ static void dataBarSm(int x, int y, int w, int barH,
 // ════════════════════════════════════════════════════════════════
 static bool jpgOutput(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bmp)
 {
-    if (!gCapturing || !photoBuf) return 0;
+    if (!gCapturing || !gJpgBuf) return 0;
     for (int row = 0; row < (int)h; row++) {
         int dy = y + row;
-        if (dy < 0 || dy >= PHOTO_H) continue;
+        if (dy < 0 || dy >= gJpgBufH) continue;
         for (int col = 0; col < (int)w; col++) {
             int dx = x + col;
-            if (dx >= 0 && dx < PHOTO_W)
-                photoBuf[dy * PHOTO_W + dx] = bmp[row * w + col];
+            if (dx >= 0 && dx < gJpgBufW)
+                gJpgBuf[dy * gJpgBufW + dx] = bmp[row * w + col];
         }
     }
     return 1;
@@ -199,6 +212,9 @@ static void loadPhoto(const char* name)
                   name, path, (int)LittleFS.exists(path));
 
     if (LittleFS.exists(path)) {
+        gJpgBuf   = photoBuf;
+        gJpgBufW  = PHOTO_W;
+        gJpgBufH  = PHOTO_H;
         gCapturing = true;
         TJpgDec.setJpgScale(2);
         JRESULT res = TJpgDec.drawFsJpg(0, 0, path, LittleFS);
@@ -215,6 +231,46 @@ static void blitPhoto()
 {
     if (!photoHasImage || !photoBuf) return;
     spr.pushImage(PHOTO_X, PHOTO_Y, PHOTO_W, PHOTO_H, photoBuf);
+}
+
+static void loadThumb(int modelIdx, int slot)
+{
+    gThumbIdx[slot] = -1;
+    if (modelIdx < 0 || modelIdx >= numModels) return;
+    if (!heliModels[modelIdx].hasImage || !photoBuf) return;
+    char path[64];
+    snprintf(path, sizeof(path), "/models/%s/thumb.jpg", heliModels[modelIdx].name);
+    if (!LittleFS.exists(path)) return;
+
+    // Decode at scale=2 into photoBuf (same as HOME screen — works for any source size)
+    memset(photoBuf, 0, PHOTO_W * PHOTO_H * sizeof(uint16_t));
+    gJpgBuf   = photoBuf;
+    gJpgBufW  = PHOTO_W;
+    gJpgBufH  = PHOTO_H;
+    gCapturing = true;
+    TJpgDec.setJpgScale(2);
+    JRESULT res = TJpgDec.drawFsJpg(0, 0, path, LittleFS);
+    gCapturing = false;
+    photoModel[0] = '\0';   // mark photoBuf as dirty so HOME reloads its photo
+
+    if (res != 0) return;
+
+    // Point-sample 160×120 → 40×30 (factor 4 in both axes)
+    for (int row = 0; row < THUMB_H; row++)
+        for (int col = 0; col < THUMB_W; col++)
+            gThumbBuf[slot][row * THUMB_W + col] =
+                photoBuf[(row * 4) * PHOTO_W + (col * 4)];
+
+    gThumbIdx[slot] = modelIdx;
+}
+
+static void loadVisibleThumbs()
+{
+    for (int i = 0; i < 3; i++) {
+        int idx = gBrowserStart + i;
+        if (idx >= numModels) { gThumbIdx[i] = -1; continue; }
+        if (gThumbIdx[i] != idx) loadThumb(idx, i);
+    }
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -510,71 +566,112 @@ static void renderRightHome(const ScreenData& d)
 }
 
 // ════════════════════════════════════════════════════════════════
-// Screen: MODEL BROWSER — full width, 3 visible rows
-// Each row 82 px: name (size 2) @ y+8, specs (size 2) @ y+30, stats (size 2) @ y+52
+// Screen: MODEL BROWSER — 3 cards × 82px with photo thumbnails
+//
+// Layout (CONTENT_H=248):
+//   3 cards × 82px = 246px, 2px background at bottom
+//
+// Each card:
+//   [40×30 thumb]  Name                      ◄ ACTIVE
+//                  Tank ml  F:speed  D:speed  Sns:Y  Prg:Xs
+//                  Fills:N  Drains:N  Vol:N.NL
+//
+// Encoder scrolls; encoder press selects.
 // ════════════════════════════════════════════════════════════════
 static void renderModelBrowser()
 {
+    loadVisibleThumbs();
+
     spr.fillRect(0, CONTENT_Y, SCR_W, CONTENT_H, C_BG);
 
-    const int ROW_H   = 82;
-    const int VISIBLE = 3;
-    int start = constrain(gModelScroll - 1, 0, max(0, numModels - VISIBLE));
+    static const uint16_t kAccentCols[] = { C_BLUE, C_ORANGE, C_ACCENT, C_PURPLE, C_GREEN };
 
-    for (int i = 0; i < VISIBLE && (start + i) < numModels; i++) {
-        int  idx = start + i;
-        int  y   = CONTENT_Y + i * ROW_H;
-        bool sel = (idx == gModelScroll);
+    for (int i = 0; i < 3; i++) {
+        int  idx = gBrowserStart + i;
+        if (idx >= numModels) break;
 
+        int      y   = CONTENT_Y + i * MB_CARD_H;
+        bool     sel = (idx == gModelScroll);
         uint16_t bg  = sel ? C_CARD : C_BG;
         uint16_t brd = sel ? C_ACCENT : C_SEP;
 
-        spr.fillRect(2, y + 2, SCR_W - 4, ROW_H - 4, bg);
-        spr.drawRect(2, y + 2, SCR_W - 4, ROW_H - 4, brd);
+        // Card background and border
+        spr.fillRect(0, y, SCR_W, MB_CARD_H, bg);
+        spr.drawRect(1, y + 1, SCR_W - 2, MB_CARD_H - 2, brd);
 
-        // Selection arrow
-        if (sel) {
-            spr.setTextSize(2);
-            spr.setTextColor(C_ACCENT, bg);
-            spr.setTextDatum(TL_DATUM);
-            spr.drawString(">", 6, y + 10);
+        // ── Thumbnail (40×30) centred vertically ─────────────────
+        const int TX = 5;
+        const int TY = y + (MB_CARD_H - THUMB_H) / 2;   // y+26
+        if (gThumbIdx[i] == idx) {
+            spr.pushImage(TX, TY, THUMB_W, THUMB_H, gThumbBuf[i]);
+        } else {
+            uint8_t  ai  = heliModels[idx].name[0]
+                           ? (uint8_t)heliModels[idx].name[0] % 5 : 0;
+            uint16_t ac  = kAccentCols[ai];
+            uint8_t  cr  = (ac >> 11) & 0x1F;
+            uint8_t  cg  = (ac >>  5) & 0x3F;
+            uint8_t  cb  =  ac        & 0x1F;
+            uint16_t dim = ((uint16_t)(cr/4) << 11) | ((uint16_t)(cg/4) << 5) | (cb/4);
+            spr.fillRoundRect(TX, TY, THUMB_W, THUMB_H, 4, dim);
+            spr.drawRoundRect(TX, TY, THUMB_W, THUMB_H, 4, ac);
+            char ini[2] = { heliModels[idx].name[0]
+                            ? (char)toupper((unsigned char)heliModels[idx].name[0]) : '?', 0 };
+            spr.setTextDatum(MC_DATUM);
+            spr.setTextColor(ac, dim);
+            spr.setTextSize(3);
+            spr.drawString(ini, TX + THUMB_W / 2, TY + THUMB_H / 2);
         }
 
-        // Model name
+        // ── Text block to the right of thumbnail ─────────────────
+        const int TXT_X = TX + THUMB_W + 8;   // 53
+
+        // Name row (+ ACTIVE badge)
+        spr.setTextDatum(TL_DATUM);
         spr.setTextSize(2);
         spr.setTextColor(sel ? C_WHITE : C_GREY, bg);
-        spr.setTextDatum(TL_DATUM);
-        spr.drawString(heliModels[idx].name, 22, y + 8);
+        spr.drawString(heliModels[idx].name, TXT_X, y + 5);
 
-        // ACTIVE badge
         if (idx == activeModelIndex) {
             spr.setTextSize(1);
             spr.setTextDatum(TR_DATUM);
             spr.setTextColor(C_GREEN, bg);
-            spr.drawString("ACTIVE", SCR_W - 8, y + 12);
+            spr.drawString("ACTIVE", SCR_W - 6, y + 8);
         }
 
-        // Specs line — abbreviated to fit ~40 chars at size 2
-        char line1[64];
-        snprintf(line1, sizeof(line1), "%dml  F:%d  D:%d  Prg:%ds  Snsr:%s",
+        // Specs row
+        char spec[56];
+        snprintf(spec, sizeof(spec), "%dml  F:%d  D:%d  Sns:%s  Prg:%ds",
                  heliModels[idx].tankVolumeMl,
                  heliModels[idx].fillSpeed,
                  heliModels[idx].drainSpeed,
-                 heliModels[idx].purgeSecs,
-                 heliModels[idx].hasTankSensor ? "YES" : "NO");
+                 heliModels[idx].hasTankSensor ? "Y" : "N",
+                 heliModels[idx].purgeSecs);
         spr.setTextSize(2);
         spr.setTextDatum(TL_DATUM);
         spr.setTextColor(sel ? C_ACCENT : C_GREY, bg);
-        spr.drawString(line1, 10, y + 30);
+        spr.drawString(spec, TXT_X, y + 27);
 
-        // Stats line
-        char line2[48];
-        snprintf(line2, sizeof(line2), "Fills:%u  Drains:%u  Vol:%.1fL",
+        // Stats row
+        char stats[48];
+        snprintf(stats, sizeof(stats), "Fills:%u  Drains:%u  Vol:%.1fL",
                  heliModels[idx].totalFills,
                  heliModels[idx].totalDrains,
                  heliModels[idx].totalFillMl / 1000.0f);
+        spr.setTextSize(2);
         spr.setTextColor(sel ? C_WHITE : C_GREY, bg);
-        spr.drawString(line2, 10, y + 52);
+        spr.drawString(stats, TXT_X, y + 49);
+
+        // Separator between cards
+        if (i < 2) spr.drawFastHLine(1, y + MB_CARD_H - 1, SCR_W - 2, C_SEP);
+    }
+
+    // Scroll position indicator — thin bar on far right (x=476..479)
+    if (numModels > 3) {
+        const int SB_H = 3 * MB_CARD_H;
+        int thumbH = max(20, SB_H * 3 / numModels);
+        int thumbY = CONTENT_Y + (SB_H - thumbH) * gBrowserStart / (numModels - 3);
+        spr.fillRect(476, CONTENT_Y, 4, SB_H, C_SEP);
+        spr.fillRect(476, thumbY, 4, thumbH, C_ACCENT);
     }
 }
 
@@ -874,7 +971,11 @@ void Screen_SetScreen(ScreenID s)
     if (s == gCurScreen) return;
     gCurScreen   = s;
     gScreenChgMs = millis();
-    if (s == SCREEN_MODEL) gModelScroll = activeModelIndex;
+    if (s == SCREEN_MODEL) {
+        gModelScroll  = constrain(activeModelIndex, 0, max(0, numModels - 1));
+        gBrowserStart = constrain(gModelScroll - 1, 0, max(0, numModels - 3));
+        for (int i = 0; i < 4; i++) gThumbIdx[i] = -1;
+    }
     if (s == SCREEN_HOME)  gActionSel   = 0;
 }
 
@@ -895,6 +996,7 @@ bool Screen_IsPostPump()       { return gPostPump; }
 int  Screen_GetPumpBtnSel()    { return gPumpBtnSel; }
 bool Screen_IsHelpCalSelected(){ return gHelpSel == 1; }
 
+
 void Screen_EncoderScroll(int delta)
 {
     switch (gCurScreen) {
@@ -905,8 +1007,13 @@ void Screen_EncoderScroll(int delta)
                 gActionSel = constrain(gActionSel + delta, 0, ACTION_COUNT - 1);
             break;
         case SCREEN_MODEL:
-            if (numModels > 0)
+            if (numModels > 0) {
                 gModelScroll = constrain(gModelScroll + delta, 0, numModels - 1);
+                if (gModelScroll < gBrowserStart)
+                    gBrowserStart = gModelScroll;
+                else if (gModelScroll >= gBrowserStart + 3)
+                    gBrowserStart = gModelScroll - 2;
+            }
             break;
         case SCREEN_HELP:
             gHelpSel = constrain(gHelpSel + delta, 0, 1);

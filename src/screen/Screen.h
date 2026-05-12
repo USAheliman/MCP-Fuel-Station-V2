@@ -74,3 +74,4 @@ int      Screen_GetPumpBtnSel();            // 0=STOP(pump on) or START(post-pum
 // Calibration screen — call before Screen_SetScreen(SCREEN_CAL)
 void     Screen_SetCalPoint(int point);     // 0 = first target, 1 = second target
 bool     Screen_IsHelpCalSelected();        // true when encoder has scrolled to CALIBRATE on help screen
+

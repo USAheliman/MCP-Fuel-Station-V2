@@ -62,11 +62,11 @@
 // GPIO35-37 — PSRAM
 // GPIO45/46 — strapping pins
 
-// ── Touch screen GT911 (I2C) ─────────────────────────────────────────
-#define PIN_TP_SDA   34
+// ── Touch screen GT911 (I2C1 / Wire1) ───────────────────────────────
+// RST not wired — GT911 powers up at default I2C address 0x5D (INT floats HIGH)
+#define PIN_TP_SDA   47
 #define PIN_TP_SCL   41
 #define PIN_TP_INT   42
-#define PIN_TP_RST   47
 
 // ── Spare ─────────────────────────────────────────────────────────────
 // GPIO38

@@ -80,6 +80,12 @@ static bool gPostPump    = false;   // true = pump stopped, review screen shown
 static bool gPostIsDrain = false;   // remember fill vs drain for colour/restart
 static int  gPumpBtnSel  = 0;       // 0=STOP(running)/START(post), 1=BACK
 
+// Calibration screen state
+static int gCalPoint = 0;           // 0 = first target, 1 = second target
+
+// Help screen encoder selection: 0 = Return, 1 = Calibrate Touch
+static int gHelpSel = 0;
+
 // ── Animated bar values ──────────────────────────────────────────
 static float animSupply   = 0.0f;
 static float animMain     = 0.0f;
@@ -703,6 +709,53 @@ static void renderHelp()
         spr.drawString(lines[i], 8, y);
         y += 18;
     }
+
+    // Calibration button — fixed at bottom of content area (y=256..278, x=140..340)
+    // Highlighted when encoder scrolls to it (gHelpSel == 1)
+    const int CAL_BX = 140, CAL_BW = 200, CAL_BY = MSG_Y - 28, CAL_BH = 22;
+    bool calSel = (gHelpSel == 1);
+    spr.fillRoundRect(CAL_BX, CAL_BY, CAL_BW, CAL_BH, 4, calSel ? C_ACCENT : C_HDR);
+    spr.drawRoundRect(CAL_BX, CAL_BY, CAL_BW, CAL_BH, 4, calSel ? C_ACCENT : C_GREY);
+    spr.setTextDatum(MC_DATUM);
+    spr.setTextSize(1);
+    spr.setTextColor(calSel ? C_BG : C_GREY, calSel ? C_ACCENT : C_HDR);
+    spr.drawString("CALIBRATE TOUCH", CAL_BX + CAL_BW / 2, CAL_BY + CAL_BH / 2);
+}
+
+// ════════════════════════════════════════════════════════════════
+// Screen: CALIBRATION — 2-point touch alignment
+// ════════════════════════════════════════════════════════════════
+static void renderCalibration()
+{
+    // Target positions — must match CAL_DISP_X1/Y1/X2/Y2 in Touch.h
+    static const int kCalX[2] = {40, 440};
+    static const int kCalY[2] = {40, 280};
+    int p = constrain(gCalPoint, 0, 1);
+
+    spr.fillRect(0, CONTENT_Y, SCR_W, CONTENT_H, C_BG);
+
+    spr.setTextDatum(TC_DATUM);
+    spr.setTextSize(2);
+    spr.setTextColor(C_ACCENT, C_BG);
+    spr.drawString("TOUCH CALIBRATION", SCR_W / 2, CONTENT_Y + 12);
+
+    spr.setTextSize(2);
+    spr.setTextColor(C_WHITE, C_BG);
+    spr.drawString("Tap the crosshair", SCR_W / 2, CONTENT_Y + 40);
+
+    char buf[16];
+    snprintf(buf, sizeof(buf), "Point %d of 2", p + 1);
+    spr.setTextSize(2);
+    spr.setTextColor(C_GREY, C_BG);
+    spr.drawString(buf, SCR_W / 2, CONTENT_Y + 62);
+
+    // Crosshair at target position
+    int cx = kCalX[p], cy = kCalY[p];
+    const int ARM = 18;
+    spr.drawFastHLine(cx - ARM, cy, ARM * 2 + 1, C_ACCENT);
+    spr.drawFastVLine(cx, cy - ARM, ARM * 2 + 1, C_ACCENT);
+    spr.drawCircle(cx, cy, 10, C_ACCENT);
+    spr.drawCircle(cx, cy, 11, C_ACCENT);
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -807,12 +860,14 @@ void Screen_SetNetworkIP(const char* sta, const char* ap)
 ScreenID Screen_CurrentScreen() { return gCurScreen; }
 int      Screen_GetActionSel()  { return gActionSel; }
 uint32_t Screen_GetScreenAge()  { return millis() - gScreenChgMs; }
+void     Screen_SetCalPoint(int p) { gCalPoint = constrain(p, 0, 1); }
 
 void Screen_SetScreen(ScreenID s)
 {
-    if (s == SCREEN_HELP)
+    if (s == SCREEN_HELP) {
         gHelpFromScreen = gCurScreen;   // remember which screen opened help
-    else {
+        gHelpSel        = 0;
+    } else {
         gPostPump   = false;
         gPumpBtnSel = 0;
     }
@@ -836,8 +891,9 @@ void Screen_ClearPostPump()
     gPumpBtnSel = 0;
 }
 
-bool Screen_IsPostPump()    { return gPostPump; }
-int  Screen_GetPumpBtnSel() { return gPumpBtnSel; }
+bool Screen_IsPostPump()       { return gPostPump; }
+int  Screen_GetPumpBtnSel()    { return gPumpBtnSel; }
+bool Screen_IsHelpCalSelected(){ return gHelpSel == 1; }
 
 void Screen_EncoderScroll(int delta)
 {
@@ -851,6 +907,9 @@ void Screen_EncoderScroll(int delta)
         case SCREEN_MODEL:
             if (numModels > 0)
                 gModelScroll = constrain(gModelScroll + delta, 0, numModels - 1);
+            break;
+        case SCREEN_HELP:
+            gHelpSel = constrain(gHelpSel + delta, 0, 1);
             break;
         default: break;
     }
@@ -961,6 +1020,10 @@ void Screen_Update(const ScreenData& data)
         case SCREEN_HELP:
             renderHeader("HELP");
             renderHelp();
+            break;
+        case SCREEN_CAL:
+            renderHeader("CALIBRATION");
+            renderCalibration();
             break;
         default: break;
     }

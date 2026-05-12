@@ -12,7 +12,8 @@ enum ScreenID {
     SCREEN_MODEL = 1,
     SCREEN_NET   = 2,
     SCREEN_HELP  = 3,
-    SCREEN_COUNT = 4
+    SCREEN_CAL   = 4,
+    SCREEN_COUNT = 5
 };
 
 // ── Action button indices (HOME idle button strip) ───────────────
@@ -69,3 +70,7 @@ void     Screen_SetPostPump(bool isDrain);  // enter: shows START+BACK, BACK hig
 void     Screen_ClearPostPump();            // exit: reset to idle HOME state
 bool     Screen_IsPostPump();
 int      Screen_GetPumpBtnSel();            // 0=STOP(pump on) or START(post-pump), 1=BACK
+
+// Calibration screen — call before Screen_SetScreen(SCREEN_CAL)
+void     Screen_SetCalPoint(int point);     // 0 = first target, 1 = second target
+bool     Screen_IsHelpCalSelected();        // true when encoder has scrolled to CALIBRATE on help screen

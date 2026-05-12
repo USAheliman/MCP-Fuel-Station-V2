@@ -13,6 +13,7 @@
 #include "screen/Screen.h"
 #include "rtc/RTC.h"
 #include "ui/Power.h"
+#include "ui/Touch.h"
 #include "web/WebServer.h"
 #include "log/Logger.h"
 #include <esp_system.h>
@@ -804,6 +805,8 @@ static bool pendingModelSave = false;
 
 // ── Power button short press ──────────────────────────────────────
 //
+static void StartTouchCal();   // forward declaration — defined before setup()
+
 // Button bounce on mechanical release produces a spurious second press
 // ~40ms after the real one.  A single timestamp guard at the very top
 // covers ALL scenarios — pump running, idle, screen switch — without
@@ -862,7 +865,10 @@ void OnShortPress()
             Screen_SetScreen(SCREEN_HOME);
             break;
         case SCREEN_HELP:
-            Screen_EncoderPress();   // returns to from-screen
+            if (Screen_IsHelpCalSelected())
+                StartTouchCal();
+            else
+                Screen_EncoderPress();   // returns to from-screen
             break;
         default:
             Screen_SetScreen(SCREEN_HOME);
@@ -944,6 +950,42 @@ static void BuzzerShutdown()
 }
 
 // ─────────────────────────────────────────────────────────────────
+// Touch calibration helpers
+// ─────────────────────────────────────────────────────────────────
+static uint16_t sCalRaw[2][2];   // [point][x/y] raw GT911 values
+
+static void calPointCb(int point, uint16_t rawX, uint16_t rawY)
+{
+    sCalRaw[point][0] = rawX;
+    sCalRaw[point][1] = rawY;
+    if (point == 0) {
+        Screen_SetCalPoint(1);
+        return;
+    }
+    // Validate spread before committing — both taps too close = restart
+    int dx = abs((int)sCalRaw[1][0] - (int)sCalRaw[0][0]);
+    int dy = abs((int)sCalRaw[1][1] - (int)sCalRaw[0][1]);
+    if (dx < 500 || dy < 500) {
+        SetMessage("Cal failed — tap further apart!", MSG_WARN);
+        Screen_SetCalPoint(0);
+        Touch_StartCalibration(calPointCb);
+        return;
+    }
+    Touch_CommitCalibration(sCalRaw[0][0], sCalRaw[0][1],
+                            sCalRaw[1][0], sCalRaw[1][1]);
+    Touch_SaveCalibration();
+    Screen_SetScreen(SCREEN_HOME);
+    SetMessage("Touch calibrated!", MSG_IDLE);
+}
+
+static void StartTouchCal()
+{
+    Screen_SetCalPoint(0);
+    Screen_SetScreen(SCREEN_CAL);
+    Touch_StartCalibration(calPointCb);
+}
+
+// ─────────────────────────────────────────────────────────────────
 // SETUP
 // ─────────────────────────────────────────────────────────────────
 void setup()
@@ -993,6 +1035,72 @@ void setup()
     BuzzerBoot();                   // plays ~1.2 s while splash is visible
     uint32_t splashMs = millis();   // hold splash for at least 2 s total
     Power_Init(OnShortPress, OnBackPress, OnShutdown);
+
+    // Touch tap: map screen coordinates to the tapped UI element.
+    // Layout constants mirror Screen.cpp (480×320 landscape):
+    //   RIGHT_X=184  BTN_Y=250  BTN_H=28  slot=71
+    //   Pump btns: y=258..288  STOP/START x=8..88  BACK x=94..174
+    //   Help btn:  x=3..43     y=299..317
+    //   Cal btn (HELP screen): x=140..340  y=256..278
+    //   Action btn Y extended to 290 — touch lands 1..12px below displayed button
+    Touch_Init([](int tx, int ty) {
+        Power_UpdateActivity();
+        if (Power_IsStandby()) { Power_ExitStandby(); return; }
+
+        switch (Screen_CurrentScreen()) {
+            case SCREEN_HOME: {
+                if (PumpEnabled) {
+                    // Pump button row y=246..285.
+                    // Left panel X maps non-linearly: full STOP button → cal_x 8..300,
+                    // full BACK button → cal_x 318..479.  Split at 305.
+                    if (ty >= 246 && ty <= 285) {
+                        if (tx <= 228) OnShortPress();   // STOP
+                        else           OnBackPress();    // BACK
+                    }
+                } else if (Screen_IsPostPump()) {
+                    if (ty >= 246 && ty <= 285) {
+                        if (tx <= 228) {
+                            if (gLastPumpWasDrain) BeginDrain(); else BeginFill();
+                        } else {
+                            Screen_ClearPostPump();
+                            Screen_SetScreen(SCREEN_HOME);
+                        }
+                    }
+                } else {
+                    // Action buttons — empirical cal_x thresholds (touch X is non-linear):
+                    //   DRAIN≈84  MODEL≈225  NET≈367  FILL≈431
+                    //   Boundaries at midpoints: 155, 296, 399
+                    if (ty >= 250 && ty <= 290 && tx >= 40 && tx <= 479) {
+                        if      (tx <= 155) BeginDrain();
+                        else if (tx <= 296) Screen_SetScreen(SCREEN_MODEL);
+                        else if (tx <= 399) Screen_SetScreen(SCREEN_NET);
+                        else                BeginFill();
+                        return;
+                    }
+                    // Help button in message bar
+                    if (tx >= 3 && tx <= 43 && ty >= 299 && ty <= 317) {
+                        Screen_SetScreen(SCREEN_HELP);
+                    }
+                }
+                break;
+            }
+            case SCREEN_HELP: {
+                // Calibrate button at bottom of help screen (x=140..340, y=256..278)
+                if (ty >= 256 && ty <= 278 && tx >= 140 && tx <= 340)
+                    StartTouchCal();
+                else
+                    OnShortPress();  // encoder-equivalent: return to from-screen
+                break;
+            }
+            case SCREEN_MODEL:
+            case SCREEN_NET:
+            default:
+                OnShortPress();
+                break;
+        }
+    });
+    Touch_LoadCalibration();
+
     WebServer_Init();
     WebServer_SetCommandHandler(OnWebCommand);
     // NTP sync and STA IP deferred to loop() — run once WiFi connects
@@ -1058,6 +1166,7 @@ void loop()
     }
 
     encoderPoll();
+    Touch_Update();
     Sensors_Update();
     Pump_UpdateRamp();
 

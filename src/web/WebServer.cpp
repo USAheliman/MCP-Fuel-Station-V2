@@ -284,6 +284,14 @@ void WebServer_Init()
     httpServer.on("/image",         HTTP_POST,   handlePostImage);
     httpServer.on("/imgchunk",      HTTP_POST,   handleImgChunk);
 
+    httpServer.on("/logo.png", HTTP_GET, [](){
+        File f = LittleFS.open("/logo.png", "r");
+        if (!f) { httpServer.send(404, "text/plain", "not found"); return; }
+        httpServer.sendHeader("Cache-Control", "max-age=3600");
+        httpServer.streamFile(f, "image/png");
+        f.close();
+    });
+
     // OTA endpoints
     httpServer.on("/ota",           HTTP_GET,    handleOtaPage);
     httpServer.on("/ota/versions",  HTTP_GET,    handleOtaVersions);

@@ -1045,7 +1045,7 @@ void setup()
     //   RIGHT_X=184  BTN_Y=250  BTN_H=28  slot=71
     //   Pump btns: y=246..285  STOP tx<=228  BACK tx>228
     //   Action btns: y=250..290  tx>=40  (DRAIN≈84 MODEL≈225 NET≈367 FILL≈431)
-    //   RESET SUPPLY (left panel idle): y=250..285  tx<40
+    //   RESET SUPPLY: encoder-only (cal_x overlaps DRAIN+MODEL — touch unreliable)
     //   Help btn (msg bar): tx=3..43  y=299..317
     Touch_Init([](int tx, int ty) {
         Power_UpdateActivity();
@@ -1071,17 +1071,10 @@ void setup()
                         }
                     }
                 } else {
-                    // RESET SUPPLY — left panel.  Check BEFORE action buttons.
-                    //   Left-panel taps land at tx≈155..300 (same zone as MODEL cal_x).
-                    //   Also fires when encoder is scrolled to ACTION_RESET regardless of tx.
-                    if (ty >= 246 && ty <= 285 &&
-                        (Screen_GetActionSel() == ACTION_RESET || (tx > 155 && tx <= 300))) {
-                        supplyTankRemainingMl = supplyTankCapacityMl;
-                        SaveStationToFS();
-                        SetMessage("Supply reset to full", MSG_IDLE);
-                        Logger_Write(LOG_INFO, CAT_SYSTEM, "SUPPLY_RESET", nullptr);
-                        return;
-                    }
+                    // RESET SUPPLY — encoder-only (scroll to RESET, press encoder button).
+                    //   GT911 non-linear calibration maps the left panel (physical x=8..174)
+                    //   to cal_x=34..306, which overlaps DRAIN(92) and MODEL(214–221).
+                    //   No x-threshold can separate them; touch is unreliable for this button.
                     // Action buttons — empirical cal_x thresholds (touch X is non-linear):
                     //   DRAIN≈84  MODEL≈225  NET≈367  FILL≈431
                     //   Boundaries at midpoints: 155, 296, 399

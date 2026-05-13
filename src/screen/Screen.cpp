@@ -1077,14 +1077,6 @@ void Screen_ShowSplash()
     TJpgDec.setJpgScale(2);
     TJpgDec.setCallback(jpgOutput);   // restore for photo thumbnails
 
-    // Title bar at the bottom
-    spr.fillRect(0, SCR_H - 44, SCR_W, 44, C_RED);
-    spr.setTextDatum(MC_DATUM);
-    spr.setTextFont(4);
-    spr.setTextColor(C_WHITE, C_RED);
-    spr.drawString("MCP Fuel Station", SCR_W / 2, SCR_H - 22);
-    spr.setTextFont(1);
-
     spr.pushSprite(0, 0);
 }
 

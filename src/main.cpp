@@ -741,6 +741,7 @@ static void UpdateBattery()
     float vCell = packV / (float)cellCnt;
 
     gDisplay.battPct = Sensors_BattPct();
+    gDisplay.cellV   = vCell;
 
     if (!lowBatteryLatched) {
         if (vCell <= cutoffVPerCell) { if (lowBattCount < 255) lowBattCount++; }
@@ -851,6 +852,12 @@ void OnShortPress()
                 case ACTION_MODEL: Screen_SetScreen(SCREEN_MODEL); break;
                 case ACTION_NET:   Screen_SetScreen(SCREEN_NET);   break;
                 case ACTION_HELP:  Screen_SetScreen(SCREEN_HELP);  break;
+                case ACTION_RESET:
+                    supplyTankRemainingMl = supplyTankCapacityMl;
+                    SaveStationToFS();
+                    SetMessage("Supply reset to full", MSG_IDLE);
+                    Logger_Write(LOG_INFO, CAT_SYSTEM, "SUPPLY_RESET", nullptr);
+                    break;
             }
             break;
         }
@@ -865,10 +872,7 @@ void OnShortPress()
             Screen_SetScreen(SCREEN_HOME);
             break;
         case SCREEN_HELP:
-            if (Screen_IsHelpCalSelected())
-                StartTouchCal();
-            else
-                Screen_EncoderPress();   // returns to from-screen
+            Screen_EncoderPress();
             break;
         default:
             Screen_SetScreen(SCREEN_HOME);
@@ -1039,10 +1043,10 @@ void setup()
     // Touch tap: map screen coordinates to the tapped UI element.
     // Layout constants mirror Screen.cpp (480×320 landscape):
     //   RIGHT_X=184  BTN_Y=250  BTN_H=28  slot=71
-    //   Pump btns: y=258..288  STOP/START x=8..88  BACK x=94..174
-    //   Help btn:  x=3..43     y=299..317
-    //   Cal btn (HELP screen): x=140..340  y=256..278
-    //   Action btn Y extended to 290 — touch lands 1..12px below displayed button
+    //   Pump btns: y=246..285  STOP tx<=228  BACK tx>228
+    //   Action btns: y=250..290  tx>=40  (DRAIN≈84 MODEL≈225 NET≈367 FILL≈431)
+    //   RESET SUPPLY (left panel idle): y=250..285  tx<40
+    //   Help btn (msg bar): tx=3..43  y=299..317
     Touch_Init([](int tx, int ty) {
         Power_UpdateActivity();
         if (Power_IsStandby()) { Power_ExitStandby(); return; }
@@ -1067,9 +1071,21 @@ void setup()
                         }
                     }
                 } else {
+                    // RESET SUPPLY — left panel.  Check BEFORE action buttons.
+                    //   Left-panel taps land at tx≈155..300 (same zone as MODEL cal_x).
+                    //   Also fires when encoder is scrolled to ACTION_RESET regardless of tx.
+                    if (ty >= 246 && ty <= 285 &&
+                        (Screen_GetActionSel() == ACTION_RESET || (tx > 155 && tx <= 300))) {
+                        supplyTankRemainingMl = supplyTankCapacityMl;
+                        SaveStationToFS();
+                        SetMessage("Supply reset to full", MSG_IDLE);
+                        Logger_Write(LOG_INFO, CAT_SYSTEM, "SUPPLY_RESET", nullptr);
+                        return;
+                    }
                     // Action buttons — empirical cal_x thresholds (touch X is non-linear):
                     //   DRAIN≈84  MODEL≈225  NET≈367  FILL≈431
                     //   Boundaries at midpoints: 155, 296, 399
+                    //   Note: MODEL (tx≈225) is shadowed by RESET SUPPLY above; use encoder.
                     if (ty >= 250 && ty <= 290 && tx >= 40 && tx <= 479) {
                         if      (tx <= 155) BeginDrain();
                         else if (tx <= 296) Screen_SetScreen(SCREEN_MODEL);
@@ -1080,18 +1096,14 @@ void setup()
                     // Help button in message bar
                     if (tx >= 3 && tx <= 43 && ty >= 299 && ty <= 317) {
                         Screen_SetScreen(SCREEN_HELP);
+                        return;
                     }
                 }
                 break;
             }
-            case SCREEN_HELP: {
-                // Calibrate button at bottom of help screen (x=140..340, y=256..278)
-                if (ty >= 256 && ty <= 278 && tx >= 140 && tx <= 340)
-                    StartTouchCal();
-                else
-                    OnShortPress();  // encoder-equivalent: return to from-screen
+            case SCREEN_HELP:
+                OnShortPress();
                 break;
-            }
             case SCREEN_MODEL:
             case SCREEN_NET:
             default:

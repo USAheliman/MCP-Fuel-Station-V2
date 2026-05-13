@@ -399,7 +399,7 @@ static void renderLeftPanel(const ScreenData& d)
         spr.drawString(sns ? "SENSOR: YES" : "SENSOR: NO", LEFT_W / 2, nameY + 40);
     }
 
-    // Two-button row — pump running: [STOP*][BACK]  post-pump: [START][BACK*]
+    // Bottom row — idle: [RESET SUPPLY]  pump/post-pump: [STOP/START][BACK]
     if (d.pumpRunning || gPostPump) {
         const int btnY  = MSG_Y - 8 - 30;        // y=246
         const int btnH  = 30;
@@ -444,6 +444,23 @@ static void renderLeftPanel(const ScreenData& d)
             }
             spr.drawString("BACK", btnX2 + btnW / 2, btnY + btnH / 2);
         }
+    } else {
+        // RESET SUPPLY — full-width button aligned with right-panel action strip
+        const int btnY = 250;
+        const int btnH = 28;
+        const int btnX = 8;
+        const int btnW = LEFT_W - 16;   // 166px
+        bool resetSel = (gActionSel == ACTION_RESET);
+        if (resetSel) {
+            spr.fillRoundRect(btnX, btnY, btnW, btnH, 5, C_ACCENT);
+            spr.setTextColor(C_BLACK, C_ACCENT);
+        } else {
+            spr.drawRoundRect(btnX, btnY, btnW, btnH, 5, C_ACCENT);
+            spr.setTextColor(C_ACCENT, C_BLACK);
+        }
+        spr.setTextDatum(MC_DATUM);
+        spr.setTextSize(2);
+        spr.drawString("RESET SUPPLY", btnX + btnW / 2, btnY + btnH / 2);
     }
 }
 
@@ -497,7 +514,8 @@ static void renderRightHome(const ScreenData& d)
 
     // ── SUPPLY TANK (both modes) ──────────────────────────────────
     if (d.supplyCapMl > 0)
-        snprintf(buf, sizeof(buf), "%.1f L", d.supplyMl / 1000.0f);
+        snprintf(buf, sizeof(buf), "%.1fL / %.1fL",
+                 d.supplyMl / 1000.0f, d.supplyCapMl / 1000.0f);
     else
         snprintf(buf, sizeof(buf), "%d%%", (int)(animSupply + 0.5f));
     float supMark = (d.supplyCapMl > 0)
@@ -514,14 +532,13 @@ static void renderRightHome(const ScreenData& d)
         snprintf(buf, sizeof(buf), "%d%%", (int)(animPressure + 0.5f));
         dataBar(X, 140, W, 14, "PRESSURE", animPressure, C_PURPLE, buf);
 
-        snprintf(buf, sizeof(buf), "%d%%", d.battPct);
+        snprintf(buf, sizeof(buf), "%.2fV/c  %d%%", d.cellV, d.battPct);
         dataBar(X, 192, W, 14, "BATTERY", animBatt, battCol(animBatt), buf);
 
-        // Action buttons — draw 4 (FILL/DRAIN/MODEL/NET); 5th scroll position
-        // activates the "?" help button in the message bar instead.
-        static const char*     kLabels[ACTION_COUNT]  = { "FILL", "DRAIN", "MODEL", "NET", "HELP" };
-        static const uint16_t  kAccent[ACTION_COUNT]  = { C_GREEN, C_ORANGE, C_BLUE, C_ACCENT, C_YELLOW };
-        const int BTN_DRAW = ACTION_COUNT - 1;   // 4 visible buttons
+        // Action buttons — draw 4 (FILL/DRAIN/MODEL/NET); HELP in msg bar; RESET in left panel.
+        static const char*     kLabels[ACTION_COUNT]  = { "FILL", "DRAIN", "MODEL", "NET", "HELP", "RESET" };
+        static const uint16_t  kAccent[ACTION_COUNT]  = { C_GREEN, C_ORANGE, C_BLUE, C_ACCENT, C_YELLOW, C_ACCENT };
+        const int BTN_DRAW = ACTION_HELP;   // 4 buttons in strip: FILL DRAIN MODEL NET
         const int BTN_Y  = 250;
         const int BTN_H  = 28;
         int slot = (W - 12) / BTN_DRAW;          // ~71 px per slot
@@ -537,7 +554,7 @@ static void renderRightHome(const ScreenData& d)
                 spr.setTextColor(kAccent[i], C_BG);
             }
             spr.setTextDatum(MC_DATUM);
-            spr.setTextSize(1);
+            spr.setTextSize(2);
             spr.drawString(kLabels[i], bx + bw / 2, BTN_Y + BTN_H / 2);
         }
 
@@ -807,16 +824,6 @@ static void renderHelp()
         y += 18;
     }
 
-    // Calibration button — fixed at bottom of content area (y=256..278, x=140..340)
-    // Highlighted when encoder scrolls to it (gHelpSel == 1)
-    const int CAL_BX = 140, CAL_BW = 200, CAL_BY = MSG_Y - 28, CAL_BH = 22;
-    bool calSel = (gHelpSel == 1);
-    spr.fillRoundRect(CAL_BX, CAL_BY, CAL_BW, CAL_BH, 4, calSel ? C_ACCENT : C_HDR);
-    spr.drawRoundRect(CAL_BX, CAL_BY, CAL_BW, CAL_BH, 4, calSel ? C_ACCENT : C_GREY);
-    spr.setTextDatum(MC_DATUM);
-    spr.setTextSize(1);
-    spr.setTextColor(calSel ? C_BG : C_GREY, calSel ? C_ACCENT : C_HDR);
-    spr.drawString("CALIBRATE TOUCH", CAL_BX + CAL_BW / 2, CAL_BY + CAL_BH / 2);
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -992,9 +999,8 @@ void Screen_ClearPostPump()
     gPumpBtnSel = 0;
 }
 
-bool Screen_IsPostPump()       { return gPostPump; }
-int  Screen_GetPumpBtnSel()    { return gPumpBtnSel; }
-bool Screen_IsHelpCalSelected(){ return gHelpSel == 1; }
+bool Screen_IsPostPump()    { return gPostPump; }
+int  Screen_GetPumpBtnSel() { return gPumpBtnSel; }
 
 
 void Screen_EncoderScroll(int delta)
@@ -1016,7 +1022,6 @@ void Screen_EncoderScroll(int delta)
             }
             break;
         case SCREEN_HELP:
-            gHelpSel = constrain(gHelpSel + delta, 0, 1);
             break;
         default: break;
     }

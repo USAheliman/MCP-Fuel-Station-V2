@@ -22,7 +22,8 @@ enum ScreenID {
 #define ACTION_MODEL   2
 #define ACTION_NET     3
 #define ACTION_HELP    4
-#define ACTION_COUNT   5
+#define ACTION_RESET   5
+#define ACTION_COUNT   6
 
 // ── Message bar colours (RGB565) ─────────────────────────────────
 #define MSG_IDLE     0x07FF   // cyan
@@ -47,6 +48,7 @@ struct ScreenData {
     char     message[48];
     uint16_t msgColour;
     int      battPct;
+    float    cellV;
     bool     pumpRunning;
     bool     tankFull;
     bool     sensorFitted;
@@ -73,5 +75,4 @@ int      Screen_GetPumpBtnSel();            // 0=STOP(pump on) or START(post-pum
 
 // Calibration screen — call before Screen_SetScreen(SCREEN_CAL)
 void     Screen_SetCalPoint(int point);     // 0 = first target, 1 = second target
-bool     Screen_IsHelpCalSelected();        // true when encoder has scrolled to CALIBRATE on help screen
 

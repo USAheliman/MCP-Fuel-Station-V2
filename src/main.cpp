@@ -210,8 +210,10 @@ static String BuildWebStateJson()
     int  drainFlow  = isDraining ? gDisplay.flowMlMin : 0;
 
     int page = lowBatteryLatched ? 4
-             : (PumpEnabled && closedLoopActive)      ? 2
-             : (PumpEnabled && drainClosedLoopActive) ? 3 : 1;
+             : (PumpEnabled && closedLoopActive)                                ? 2  // fill running
+             : (PumpEnabled && drainClosedLoopActive && autoFillSequence == AF_NONE) ? 3  // standalone drain
+             : (autoFillSequence != AF_NONE)                                    ? 2  // auto-seq → fill page
+             : 1;
 
     noInterrupts();
     uint32_t fp = fillPulses, dp = drainPulses;
@@ -243,7 +245,7 @@ static String BuildWebStateJson()
     j += "\"drainVol\":"     + String(lastDrainVolumeMl) + ",";
     j += "\"drainPct\":"     + String(drainPct)          + ",";
     j += "\"drainSpeedSlider\":" + String(drainClosedLoopTargetMlMin > 0 ? drainClosedLoopTargetMlMin : m.drainSpeed) + ",";
-    j += "\"pumpOn\":"       + String(PumpEnabled ? "true" : "false") + ",";
+    j += "\"pumpOn\":"       + String((PumpEnabled || autoFillSequence != AF_NONE) ? "true" : "false") + ",";
     j += "\"message\":"      + jStr(gDisplay.message) + ",";
     j += "\"msgColor\":"     + jStr(msgColorClass(gDisplay.msgColour)) + ",";
     j += "\"lowBat\":"       + String(lowBatteryLatched ? "true" : "false") + ",";
@@ -457,6 +459,19 @@ void OnWebCommand(const String& raw)
 void BeginFill()
 {
     if (lowBatteryLatched) return;
+
+    // Models without a tank sensor: drain first so the tank is confirmed empty,
+    // then fill to the set volume.  Skip this when calibrating or already mid-sequence.
+    if (!fillCalActive && !heliModels[activeModelIndex].hasTankSensor
+            && autoFillSequence == AF_NONE) {
+        autoFillSequence     = AF_DRAIN_PENDING;
+        autoFillTransitionMs = millis();
+        SetMessage("Draining before Refueling", MSG_IDLE);
+        Logger_Write(LOG_INFO, CAT_PUMP, "AUTO_FILL_SEQ", heliModels[activeModelIndex].name,
+                     (float)heliModels[activeModelIndex].tankVolumeMl);
+        return;
+    }
+
     gLastPumpWasDrain = false;
     Screen_ClearPostPump();
     if (!fillCalActive && heliModels[activeModelIndex].hasTankSensor && !Sensors_IsTankSensorFitted()) {
@@ -520,7 +535,7 @@ void BeginDrain()
     Logger_Write(LOG_INFO, CAT_PUMP, "DRAIN_START",
                  heliModels[activeModelIndex].name, (float)targetDrainMl);
     Logger_SavePumpState("DRAIN", heliModels[activeModelIndex].name, targetDrainMl, 0);
-    SetMessage("Draining", MSG_DRAINING);
+    SetMessage(autoFillSequence == AF_DRAINING ? "Draining before Refueling" : "Draining", MSG_DRAINING);
 }
 
 void StopFill(const char* reason)
@@ -629,8 +644,13 @@ void BeginOverflowPurge(const char* reason)
     autoFillSequence = AF_PURGING;
     purgeStartMs     = millis();
     noInterrupts(); drainPulses = 0; interrupts();
-    int purgeSpd = drainMlPerMinPerPwm > 0.0f
-        ? Pump_DrainMlMinToPwm(heliModels[activeModelIndex].drainSpeed) : MIN_PWM;
+    int purgeSpd;
+    if (drainMlPerMinPerPwm > 0.0f)
+        purgeSpd = Pump_DrainMlMinToPwm(heliModels[activeModelIndex].drainSpeed);
+    else
+        purgeSpd = drainClosedLoopCurrentPwm > MIN_PWM ? drainClosedLoopCurrentPwm : MAX_PWM / 2;
+    Logger_Write(LOG_INFO, CAT_PUMP, "AUTO_FILL_PURGE", heliModels[activeModelIndex].name,
+                 (float)secs, (float)purgeSpd);
     Pump_Enable();
     PumpEnabled = true;
     Pump_SetTarget(-purgeSpd);
@@ -699,8 +719,13 @@ static void UpdateDrainFlow(uint32_t now)
             HeliLib_Save(activeModelIndex);
             Logger_Write(LOG_WARN, CAT_PUMP, "DRAIN_EMPTY",
                          heliModels[activeModelIndex].name, lastDrainVolumeMl);
-            SetMessage("Tank was empty", MSG_WARN);
-            Screen_SetPostPump(true);
+            if (autoFillSequence == AF_DRAINING) {
+                autoFillTransitionMs = millis();
+                SetMessage("Already empty — filling...", MSG_IDLE);
+            } else {
+                SetMessage("Tank was empty", MSG_WARN);
+                Screen_SetPostPump(true);
+            }
             return;
         }
         int thresh = drainPeakFlowMlMin * (100 - tankEmptyFlowDropPct) / 100;
@@ -729,10 +754,16 @@ static void UpdateDrainFlow(uint32_t now)
 }
 
 // ── Auto sequence update ──────────────────────────────────────────
-static void UpdateAutoSequence(uint32_t now)
+static void UpdateAutoSequence(uint32_t)
 {
+    // Always use a fresh timestamp. Flow callbacks (UpdateDrainFlow, UpdateFillFlow)
+    // set autoFillTransitionMs/purgeStartMs via millis() during the same loop tick
+    // that passes 'now'. Stale 'now' causes unsigned underflow → timers fire instantly.
+    uint32_t now = millis();
+
     if (autoFillSequence == AF_DRAIN_PENDING && now - autoFillTransitionMs >= 500) {
         autoFillSequence = AF_DRAINING;
+        Logger_Write(LOG_INFO, CAT_PUMP, "AUTO_FILL_DRAIN", heliModels[activeModelIndex].name);
         BeginDrain();
     }
     if (autoFillSequence == AF_DRAINING && !PumpEnabled && autoFillTransitionMs > 0) {
@@ -743,6 +774,7 @@ static void UpdateAutoSequence(uint32_t now)
             lastFillVolumeMl       = 0;
             supplyAtSessionStartMl = supplyTankRemainingMl;
             ResetFlowUi(gFillUi);
+            Logger_Write(LOG_INFO, CAT_PUMP, "AUTO_FILL_FILL", heliModels[activeModelIndex].name);
             BeginFill();
         }
     }

@@ -577,7 +577,7 @@ static void renderRightHome(const ScreenData& d)
         snprintf(buf, sizeof(buf), "%d%%", (int)(animPressure + 0.5f));
         dataBarSm(X, 206, W, 12, "PRESSURE", animPressure, C_PURPLE, buf);
 
-        snprintf(buf, sizeof(buf), "%d%%", d.battPct);
+        snprintf(buf, sizeof(buf), "%.2fV/c  %d%%", d.cellV, d.battPct);
         dataBarSm(X, 242, W, 12, "BATTERY", animBatt, battCol(animBatt), buf);
     }
 }

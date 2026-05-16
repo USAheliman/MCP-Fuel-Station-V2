@@ -224,11 +224,12 @@
     margin-bottom: 4px;
   }
   .progress-bar {
+    position: relative;
     width: 100%;
     height: 12px;
     background: var(--panel2);
     border-radius: 6px;
-    overflow: hidden;
+    overflow: visible;
     border: 1px solid var(--border);
   }
   .progress-fill {
@@ -236,10 +237,22 @@
     border-radius: 6px;
     transition: width 0.5s ease;
     background: linear-gradient(90deg, var(--accent2), var(--accent));
+    overflow: hidden;
   }
-  .progress-fill.green { background: linear-gradient(90deg, #00a040, var(--green)); }
-  .progress-fill.red   { background: linear-gradient(90deg, #a00000, var(--red)); }
+  .bar-mark {
+    position: absolute;
+    top: -3px;
+    bottom: -3px;
+    width: 2px;
+    background: rgba(255,255,255,0.75);
+    border-radius: 1px;
+    pointer-events: none;
+    display: none;
+  }
+  .progress-fill.green  { background: linear-gradient(90deg, #00a040, var(--green)); }
+  .progress-fill.red    { background: linear-gradient(90deg, #a00000, var(--red)); }
   .progress-fill.orange { background: linear-gradient(90deg, #c06000, var(--orange)); }
+  .progress-fill.yellow { background: linear-gradient(90deg, #a08000, var(--yellow)); }
 
   /* ── Message box ── */
   #main-message, #fill-message, #drain-message {
@@ -403,6 +416,7 @@
       </div>
       <div class="progress-bar">
         <div class="progress-fill green" id="main-supply-bar" style="width:0%"></div>
+        <div class="bar-mark" id="main-supply-mark"></div>
       </div>
     </div>
     <div class="progress-wrap">
@@ -474,6 +488,7 @@
       </div>
       <div class="progress-bar">
         <div class="progress-fill green" id="fill-supply-bar" style="width:0%"></div>
+        <div class="bar-mark" id="fill-supply-mark"></div>
       </div>
     </div>
     <div class="progress-wrap">
@@ -542,6 +557,7 @@
       </div>
       <div class="progress-bar">
         <div class="progress-fill green" id="drain-supply-bar" style="width:0%"></div>
+        <div class="bar-mark" id="drain-supply-mark"></div>
       </div>
     </div>
     <div class="progress-wrap">
@@ -1371,9 +1387,17 @@ function updateUI(s) {
     set('main-supply-pct', s.supplyPct + '%');
     set('fill-supply-pct', s.supplyPct + '%');
     set('drain-supply-pct', s.supplyPct + '%');
-    setBar('main-supply-bar',   s.supplyPct, s.supplyLow);
-    setBar('fill-supply-bar',   s.supplyPct, s.supplyLow);
-    setBar('drain-supply-bar',  s.supplyPct, s.supplyLow);
+    const supLvl = s.supplyRed ? 2 : s.supplyLow ? 1 : 0;
+    setBar('main-supply-bar',   s.supplyPct, supLvl);
+    setBar('fill-supply-bar',   s.supplyPct, supLvl);
+    setBar('drain-supply-bar',  s.supplyPct, supLvl);
+    if (s.supplyLowPct > 0) {
+      const mp = s.supplyLowPct + '%';
+      ['main','fill','drain'].forEach(function(p) {
+        const m = document.getElementById(p + '-supply-mark');
+        if (m) { m.style.left = mp; m.style.display = 'block'; }
+      });
+    }
   }
   if (s.supplyMl !== undefined) {
     const supTxt = (s.supplyMl / 1000).toFixed(1) + 'L / ' + (s.supplyCapMl / 1000).toFixed(1) + 'L';
@@ -1532,11 +1556,11 @@ function setInp(id, val) {
   if (el) el.value = val;
 }
 
-function setBar(id, pct, isLow) {
+function setBar(id, pct, level) {
   const el = document.getElementById(id);
   if (!el) return;
   el.style.width = Math.max(0, Math.min(100, pct)) + '%';
-  el.className = 'progress-fill ' + (isLow ? 'red' : pct < 20 ? 'orange' : 'green');
+  el.className = 'progress-fill ' + (level >= 2 ? 'red' : level === 1 ? 'yellow' : 'green');
 }
 
 function selectModelNow(list, i) {
@@ -1600,7 +1624,7 @@ const helpContent = {
     <ul>
       <li>Shows remaining fuel volume and percentage</li>
       <li>Estimated from flow meter pulses during fill and drain operations</li>
-      <li>Turns red when below the Low Threshold — refill supply and use <em>Station → Full Refill</em> to reset</li>
+      <li>Turns yellow at the Low Threshold, red at half the threshold — refill supply and use <em>Station → Full Refill</em> to reset</li>
     </ul>
     <h4>Model Parameters</h4>
     <ul>

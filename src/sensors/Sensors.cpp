@@ -13,10 +13,8 @@ float drainPulsesPerLiter = DRAIN_PULSES_DEFAULT;
 
 float filteredBattV   = 0.0f;
 int   cellCount       = 0;
-float lastPressureBar = 0.0f;
 
-static bool battFilterInit      = false;
-static bool pressureSensorFound = false;
+static bool battFilterInit = false;
 
 // ── Flow ISRs ─────────────────────────────────────────────────────
 static void IRAM_ATTR FillFlowISR()  { fillPulses++;  }
@@ -93,24 +91,6 @@ static void i2cBusRecover()
     pinMode(PIN_I2C_SCL, INPUT);
 }
 
-// ── ABP2 pressure read (I2C) ─────────────────────────────────────
-// ABP2 returns 2 status/data bytes, 2 pressure bytes, 2 temp bytes
-static float ReadABP2()
-{
-    if (!pressureSensorFound) return lastPressureBar;
-    Wire.requestFrom((uint8_t)I2C_ADDR_PRESSURE, (uint8_t)6);
-    if (Wire.available() < 4) return lastPressureBar;
-    uint8_t status = Wire.read();
-    uint8_t ph     = Wire.read();
-    uint8_t pl     = Wire.read();
-    Wire.read(); Wire.read(); Wire.read(); // temp bytes — discard
-    if ((status & 0xC0) != 0x00) return lastPressureBar; // not normal state
-    uint16_t raw = ((uint16_t)(ph & 0x3F) << 8) | pl;
-    // ABP2 output: 10% (1638) to 90% (14745) of 2^14
-    float pct = (raw - 1638.0f) / (14745.0f - 1638.0f);
-    return constrain(pct * PRESSURE_MAX_BAR, 0.0f, PRESSURE_MAX_BAR);
-}
-
 // ── Init ─────────────────────────────────────────────────────────
 void Sensors_Init()
 {
@@ -128,29 +108,17 @@ void Sensors_Init()
     analogReadResolution(BATT_ADC_BITS);
     analogSetAttenuation(ADC_11db);        // full 0-3.3V range
 
-    // I2C — DS3231 + ABP2
-    // Bus recovery first: if pressure sensor is stuck holding a line low,
-    // 9 SCL pulses + STOP will release it before Wire.begin() arms the driver.
+    // I2C — DS3231 (RTC)
     i2cBusRecover();
-    delay(50);   // let sensor complete power-on before bus transactions start
+    delay(50);
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
     Wire.setClock(400000);
-    Wire.setTimeout(10);   // must be set BEFORE the pressure probe below
-
-    // ABP2 is read-only — probe with requestFrom, not beginTransmission
-    uint8_t got = Wire.requestFrom((uint8_t)I2C_ADDR_PRESSURE, (uint8_t)1);
-    pressureSensorFound = (got == 1);
-    if (pressureSensorFound) Wire.read();   // discard the probed byte
-    Serial.printf("Sensors: pressure sensor %s\n",
-                  pressureSensorFound ? "found" : "NOT found — polling disabled");
+    Wire.setTimeout(10);
 
     // Scan the bus to see all devices
     i2cScan();
 
     Serial.println("Sensors: init OK");
-}
-
-bool Sensors_IsPressureFound() { return pressureSensorFound;
 }
 
 // ── Update (call every loop) ─────────────────────────────────────
@@ -169,12 +137,6 @@ void Sensors_Update()
         Sensors_DetectCellCount(filteredBattV);
     }
 
-    // Pressure — read at ~2Hz (skipped if sensor not detected at boot)
-    static uint32_t lastPressMs = 0;
-    if (pressureSensorFound && now - lastPressMs >= 500) {
-        lastPressMs    = now;
-        lastPressureBar = ReadABP2();
-    }
 }
 
 bool Sensors_IsTankFull()
@@ -195,7 +157,6 @@ bool Sensors_IsTankSensorFitted()
 }
 
 float Sensors_BattVoltage()  { return filteredBattV; }
-float Sensors_PressureBar()  { return lastPressureBar; }
 
 int Sensors_BattPct()
 {

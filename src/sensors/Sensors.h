@@ -3,7 +3,7 @@
 
 // ═══════════════════════════════════════════════════════════════════
 // MCP Fuel Station V2 — Sensors
-// Flow, tank full/detect, battery voltage, pressure (ABP2)
+// Flow, tank full/detect, battery voltage
 // ═══════════════════════════════════════════════════════════════════
 
 // ── Flow sensor calibration ──────────────────────────────────────
@@ -36,17 +36,11 @@ void Sensors_DetectCellCount(float packV);
 #define TANK_FULL_ACTIVE_HIGH  1
 #define TANK_DETECT_CONNECTED  LOW   // pulled LOW when sensor shell GND present
 
-// ── Pressure (Honeywell ABP2 I2C 0x28) ───────────────────────────
-#define PRESSURE_MAX_BAR    4.0f
-extern float lastPressureBar;
-
 // ── API ───────────────────────────────────────────────────────────
 void Sensors_Init();
 void Sensors_Update();          // call every loop — non-blocking
-bool Sensors_IsPressureFound(); // true if ABP2 responded at init
 
 bool Sensors_IsTankFull();
 bool Sensors_IsTankSensorFitted();
 float Sensors_BattVoltage();
-float Sensors_PressureBar();
 int   Sensors_BattPct();

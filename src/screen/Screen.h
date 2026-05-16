@@ -12,8 +12,7 @@ enum ScreenID {
     SCREEN_MODEL = 1,
     SCREEN_NET   = 2,
     SCREEN_HELP  = 3,
-    SCREEN_CAL   = 4,
-    SCREEN_COUNT = 5
+    SCREEN_COUNT = 4
 };
 
 // ── Action button indices (HOME idle button strip) ───────────────
@@ -37,7 +36,6 @@ struct ScreenData {
     float    outerTankPct;   // supply tank %
     float    mainTankPct;    // model tank %
     float    pumpSpeedPct;
-    float    pressurePct;
     int      flowMlMin;
     int      volumeMl;
     int      targetMl;
@@ -73,6 +71,4 @@ void     Screen_ClearPostPump();            // exit: reset to idle HOME state
 bool     Screen_IsPostPump();
 int      Screen_GetPumpBtnSel();            // 0=STOP(pump on) or START(post-pump), 1=BACK
 
-// Calibration screen — call before Screen_SetScreen(SCREEN_CAL)
-void     Screen_SetCalPoint(int point);     // 0 = first target, 1 = second target
 

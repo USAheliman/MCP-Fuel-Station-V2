@@ -3,7 +3,7 @@
 
 // ═══════════════════════════════════════════════════════════════════
 // MCP Fuel Station V2 — DS3231 RTC wrapper
-// I2C shared with ABP2 pressure sensor; Wire must be started first.
+// I2C shared bus; Wire must be started before RTC_Init.
 // ═══════════════════════════════════════════════════════════════════
 
 void     RTC_Init();

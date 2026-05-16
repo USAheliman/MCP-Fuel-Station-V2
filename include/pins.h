@@ -45,11 +45,10 @@
 #define PIN_TFT_BL          48   // Backlight PWM
 #define TFT_BL_LEDC_CHANNEL  1
 
-// ── I2C bus (shared DS3231 + ABP2) ───────────────────────────────────
+// ── I2C bus (DS3231) ─────────────────────────────────────────────────
 #define PIN_I2C_SDA         18
 #define PIN_I2C_SCL         39
 #define I2C_ADDR_RTC      0x68   // DS3231 RTC
-#define I2C_ADDR_PRESSURE 0x28   // Honeywell ABP2 (0x57 was DS3231 EEPROM — wrong)
 
 // ── Rotary encoder KY-040 ────────────────────────────────────────────
 #define PIN_ENC_CLK         40   // CLK — interrupt driven

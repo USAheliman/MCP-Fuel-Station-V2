@@ -13,7 +13,6 @@
 #include "screen/Screen.h"
 #include "rtc/RTC.h"
 #include "ui/Power.h"
-#include "ui/Touch.h"
 #include "web/WebServer.h"
 #include "log/Logger.h"
 #include <esp_system.h>
@@ -37,6 +36,19 @@ int lastFillVolumeMl  = 0;
 int lastDrainVolumeMl = 0;
 int targetFillMl      = 0;
 int targetDrainMl     = 0;
+
+// ── Pump failsafes ────────────────────────────────────────────────
+#define BLOCKED_FLOW_THRESH   100              // ml/min — below this counts as no flow
+#define BLOCKED_PWM_THRESH    ((int)(MAX_PWM * 0.9f))  // 90% of max PWM
+#define BLOCKED_SECS          8               // confirm block after 8 s at max power
+#define FILTER_SETTLE_MS      10000           // wait 10 s before checking filter wear
+#define FILTER_PWM_MULT       1.4f            // actual PWM > expected × 1.4 = worn filter
+
+static uint32_t fillStartPumpMs     = 0;
+static uint32_t fillBlockedSinceMs  = 0;
+static bool     fillFilterWarnFired = false;
+static uint32_t drainBlockedSinceMs = 0;
+static bool     drainFilterWarnFired= false;
 
 // ── Tank empty detection (ported from V1) ─────────────────────────
 #define TANK_EMPTY_FLOW_DROP_DEFAULT  30
@@ -206,7 +218,10 @@ static String BuildWebStateJson()
                       ? constrain((int)(100.0f * lastDrainVolumeMl / m.tankVolumeMl), 0, 100) : 0;
 
     bool isDraining = drainClosedLoopActive || autoFillSequence == AF_PURGING;
-    int  fillFlow   = (!isDraining && closedLoopActive) ? gDisplay.flowMlMin : 0;
+    // AF_DRAINING is on the fill page (page=2) but pump runs in drain direction;
+    // surface the drain flow as fillFlow so the fill page meter shows real flow.
+    int  fillFlow   = (!isDraining && closedLoopActive) ? gDisplay.flowMlMin
+                    : (autoFillSequence == AF_DRAINING)  ? gDisplay.flowMlMin : 0;
     int  drainFlow  = isDraining ? gDisplay.flowMlMin : 0;
 
     int page = lowBatteryLatched ? 4
@@ -229,6 +244,10 @@ static String BuildWebStateJson()
     j += "\"drainSpd\":"     + String(m.drainSpeed)   + ",";
     j += "\"supplyPct\":"    + String(supPct)          + ",";
     j += "\"supplyLow\":"    + String(supLow ? "true" : "false") + ",";
+    j += "\"supplyRed\":"    + String(supplyTankRemainingMl < supplyLowThresholdMl / 2 ? "true" : "false") + ",";
+    j += "\"supplyLowPct\":" + String(supplyTankCapacityMl > 0
+                                      ? (int)(100.0f * supplyLowThresholdMl / supplyTankCapacityMl)
+                                      : 0) + ",";
     j += "\"supplyMl\":"     + String(supplyTankRemainingMl) + ",";
     j += "\"supplyCapMl\":"  + String(supplyTankCapacityMl)  + ",";
     j += "\"battPct\":"      + String(gDisplay.battPct) + ",";
@@ -502,6 +521,9 @@ void BeginFill()
     Pump_Enable();
     PumpEnabled = true;
     Pump_SetTarget(+MIN_PWM);
+    fillStartPumpMs     = millis();
+    fillBlockedSinceMs  = 0;
+    fillFilterWarnFired = false;
 
     Logger_Write(LOG_INFO, CAT_PUMP, "FILL_START",
                  heliModels[activeModelIndex].name, (float)targetFillMl);
@@ -531,6 +553,8 @@ void BeginDrain()
     Pump_Enable();
     PumpEnabled = true;
     Pump_SetTarget(-MIN_PWM);
+    drainBlockedSinceMs  = 0;
+    drainFilterWarnFired = false;
 
     Logger_Write(LOG_INFO, CAT_PUMP, "DRAIN_START",
                  heliModels[activeModelIndex].name, (float)targetDrainMl);
@@ -584,7 +608,6 @@ static void UpdateFillFlow(uint32_t now)
         ? constrain((int)(100.0f * supplyTankRemainingMl / supplyTankCapacityMl), 0, 100) : 0;
     gDisplay.pumpSpeedPct = MAX_PWM > MIN_PWM
         ? constrain((int)(100.0f * closedLoopCurrentPwm / MAX_PWM), 0, 100) : 0;
-    gDisplay.pressurePct  = constrain((int)(Sensors_PressureBar() / 4.0f * 100.0f), 0, 100);
 
     // Persist pump state every 10 s so power-loss detection stays current
     static uint32_t lastFillStateMs = 0;
@@ -592,6 +615,45 @@ static void UpdateFillFlow(uint32_t now)
         lastFillStateMs = now;
         Logger_SavePumpState("FILL", heliModels[activeModelIndex].name,
                              targetFillMl, lastFillVolumeMl);
+    }
+
+    // ── Blocked-line detection ────────────────────────────────────
+    if (!fillCalActive && PumpEnabled && closedLoopActive) {
+        bool highPwm = (closedLoopCurrentPwm >= BLOCKED_PWM_THRESH);
+        bool lowFlow = (flowMlMin < BLOCKED_FLOW_THRESH);
+        if (highPwm && lowFlow) {
+            if (fillBlockedSinceMs == 0) fillBlockedSinceMs = now;
+            else if ((now - fillBlockedSinceMs) >= (BLOCKED_SECS * 1000UL)) {
+                Pump_Stop();
+                autoFillSequence = AF_NONE;
+                Logger_Write(LOG_FAULT, CAT_PUMP, "FILL_BLOCKED",
+                             heliModels[activeModelIndex].name,
+                             (float)closedLoopCurrentPwm, (float)flowMlMin);
+                Logger_ClearPumpState();
+                SaveStationToFS();
+                SetMessage("BLOCKED LINE - fill stopped!", MSG_WARN);
+                Screen_SetPostPump(false);
+                fillBlockedSinceMs  = 0;
+                fillFilterWarnFired = false;
+                return;
+            }
+        } else {
+            fillBlockedSinceMs = 0;
+        }
+    }
+
+    // ── Filter wear detection ─────────────────────────────────────
+    if (!fillCalActive && PumpEnabled && closedLoopActive && !fillFilterWarnFired &&
+        mlPerMinPerPwm > 0.0f && fillStartPumpMs > 0 &&
+        (now - fillStartPumpMs) >= FILTER_SETTLE_MS) {
+        int expectedPwm = Pump_MlMinToPwm(closedLoopTargetMlMin);
+        if (expectedPwm > 0 && closedLoopCurrentPwm > (int)(expectedPwm * FILTER_PWM_MULT)) {
+            fillFilterWarnFired = true;
+            Logger_Write(LOG_WARN, CAT_PUMP, "FILTER_WARN",
+                         heliModels[activeModelIndex].name,
+                         (float)closedLoopCurrentPwm, (float)expectedPwm);
+            SetMessage("Check filter - pump working hard", MSG_WARN);
+        }
     }
 
     // Auto-stop conditions — all bypassed during calibration
@@ -692,7 +754,6 @@ static void UpdateDrainFlow(uint32_t now)
         ? constrain((int)(100.0f * supplyTankRemainingMl / supplyTankCapacityMl), 0, 100) : 0;
     gDisplay.pumpSpeedPct = MAX_PWM > MIN_PWM
         ? constrain((int)(100.0f * drainClosedLoopCurrentPwm / MAX_PWM), 0, 100) : 0;
-    gDisplay.pressurePct  = constrain((int)(Sensors_PressureBar() / 4.0f * 100.0f), 0, 100);
 
     // Persist pump state every 10 s so power-loss detection stays current
     static uint32_t lastDrainStateMs = 0;
@@ -700,6 +761,46 @@ static void UpdateDrainFlow(uint32_t now)
         lastDrainStateMs = now;
         Logger_SavePumpState("DRAIN", heliModels[activeModelIndex].name,
                              targetDrainMl, lastDrainVolumeMl);
+    }
+
+    // ── Blocked-line detection ────────────────────────────────────
+    if (!drainCalActive && PumpEnabled && drainClosedLoopActive &&
+        autoFillSequence != AF_PURGING) {
+        bool highPwm = (drainClosedLoopCurrentPwm >= BLOCKED_PWM_THRESH);
+        bool lowFlow = (flowMlMin < BLOCKED_FLOW_THRESH);
+        if (highPwm && lowFlow) {
+            if (drainBlockedSinceMs == 0) drainBlockedSinceMs = now;
+            else if ((now - drainBlockedSinceMs) >= (BLOCKED_SECS * 1000UL)) {
+                Pump_Stop();
+                autoFillSequence = AF_NONE;
+                Logger_Write(LOG_FAULT, CAT_PUMP, "DRAIN_BLOCKED",
+                             heliModels[activeModelIndex].name,
+                             (float)drainClosedLoopCurrentPwm, (float)flowMlMin);
+                Logger_ClearPumpState();
+                SaveStationToFS();
+                SetMessage("BLOCKED LINE - drain stopped!", MSG_WARN);
+                Screen_SetPostPump(true);
+                drainBlockedSinceMs  = 0;
+                drainFilterWarnFired = false;
+                return;
+            }
+        } else {
+            drainBlockedSinceMs = 0;
+        }
+    }
+
+    // ── Filter wear detection ─────────────────────────────────────
+    if (!drainCalActive && PumpEnabled && drainClosedLoopActive && !drainFilterWarnFired &&
+        autoFillSequence != AF_PURGING && drainMlPerMinPerPwm > 0.0f && drainStartMs > 0 &&
+        (now - drainStartMs) >= FILTER_SETTLE_MS) {
+        int expectedPwm = Pump_DrainMlMinToPwm(drainClosedLoopTargetMlMin);
+        if (expectedPwm > 0 && drainClosedLoopCurrentPwm > (int)(expectedPwm * FILTER_PWM_MULT)) {
+            drainFilterWarnFired = true;
+            Logger_Write(LOG_WARN, CAT_PUMP, "FILTER_WARN",
+                         heliModels[activeModelIndex].name,
+                         (float)drainClosedLoopCurrentPwm, (float)expectedPwm);
+            SetMessage("Check filter - pump working hard", MSG_WARN);
+        }
     }
 
     // Tank empty detection (ported from V1)
@@ -873,8 +974,6 @@ static void encoderPoll()
 static bool pendingModelSave = false;
 
 // ── Power button short press ──────────────────────────────────────
-//
-static void StartTouchCal();   // forward declaration — defined before setup()
 
 // Button bounce on mechanical release produces a spurious second press
 // ~40ms after the real one.  A single timestamp guard at the very top
@@ -1023,42 +1122,6 @@ static void BuzzerShutdown()
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Touch calibration helpers
-// ─────────────────────────────────────────────────────────────────
-static uint16_t sCalRaw[2][2];   // [point][x/y] raw GT911 values
-
-static void calPointCb(int point, uint16_t rawX, uint16_t rawY)
-{
-    sCalRaw[point][0] = rawX;
-    sCalRaw[point][1] = rawY;
-    if (point == 0) {
-        Screen_SetCalPoint(1);
-        return;
-    }
-    // Validate spread before committing — both taps too close = restart
-    int dx = abs((int)sCalRaw[1][0] - (int)sCalRaw[0][0]);
-    int dy = abs((int)sCalRaw[1][1] - (int)sCalRaw[0][1]);
-    if (dx < 500 || dy < 500) {
-        SetMessage("Cal failed — tap further apart!", MSG_WARN);
-        Screen_SetCalPoint(0);
-        Touch_StartCalibration(calPointCb);
-        return;
-    }
-    Touch_CommitCalibration(sCalRaw[0][0], sCalRaw[0][1],
-                            sCalRaw[1][0], sCalRaw[1][1]);
-    Touch_SaveCalibration();
-    Screen_SetScreen(SCREEN_HOME);
-    SetMessage("Touch calibrated!", MSG_IDLE);
-}
-
-static void StartTouchCal()
-{
-    Screen_SetCalPoint(0);
-    Screen_SetScreen(SCREEN_CAL);
-    Touch_StartCalibration(calPointCb);
-}
-
-// ─────────────────────────────────────────────────────────────────
 // SETUP
 // ─────────────────────────────────────────────────────────────────
 void setup()
@@ -1077,7 +1140,7 @@ void setup()
     Sensors_Init();
     RTC_Init();
     // RTClib calls Wire.begin() internally, resetting clock and timeout.
-    // Re-apply here so both DS3231 and ABP2 run at correct settings.
+    // Re-apply here so DS3231 runs at correct settings.
     Wire.setClock(400000);
     Wire.setTimeout(10);
     Pump_Init();
@@ -1099,8 +1162,6 @@ void setup()
             Logger_Write(LOG_FAULT, CAT_POWER, "BROWNOUT", "Device reset — supply voltage collapsed");
         if (!RTC_IsRunning())
             Logger_Write(LOG_ERROR, CAT_SENSOR, "RTC_FAIL", "DS3231 not found on I2C");
-        if (!Sensors_IsPressureFound())
-            Logger_Write(LOG_WARN, CAT_SENSOR, "PRESSURE_FAIL", "ABP2 not found — pressure disabled");
     }
 
     Screen_Init();
@@ -1108,78 +1169,6 @@ void setup()
     BuzzerBoot();                   // plays ~1.2 s while splash is visible
     uint32_t splashMs = millis();   // hold splash for at least 2 s total
     Power_Init(OnShortPress, OnBackPress, OnShutdown);
-
-    // Touch tap: map screen coordinates to the tapped UI element.
-    // Layout constants mirror Screen.cpp (480×320 landscape):
-    //   RIGHT_X=184  BTN_Y=250  BTN_H=28  slot=71
-    //   Pump btns: y=246..285  STOP tx<=228  BACK tx>228
-    //   Action btns: y=250..290  tx>=40  (DRAIN≈84 MODEL≈225 NET≈367 FILL≈431)
-    //   RESET SUPPLY: encoder-only (cal_x overlaps DRAIN+MODEL — touch unreliable)
-    //   Help btn (msg bar): tx=3..43  y=299..317
-    Touch_Init([](int tx, int ty) {
-        Power_UpdateActivity();
-        if (Power_IsStandby()) { Power_ExitStandby(); return; }
-
-        switch (Screen_CurrentScreen()) {
-            case SCREEN_HOME: {
-                if (PumpEnabled) {
-                    // Pump button row y=246..285.
-                    // Left panel X maps non-linearly: full STOP button → cal_x 8..300,
-                    // full BACK button → cal_x 318..479.  Split at 305.
-                    if (ty >= 246 && ty <= 285) {
-                        if (tx <= 228) {
-                            StopFill("TOUCH");
-                            bool wasDrain = drainClosedLoopActive || (autoFillSequence == AF_PURGING);
-                            Screen_SetPostPump(wasDrain);
-                            Power_UpdateActivity();
-                        } else {
-                            OnBackPress();    // BACK
-                        }
-                    }
-                } else if (Screen_IsPostPump()) {
-                    if (ty >= 246 && ty <= 285) {
-                        if (tx <= 228) {
-                            if (gLastPumpWasDrain) BeginDrain(); else BeginFill();
-                        } else {
-                            Screen_ClearPostPump();
-                            Screen_SetScreen(SCREEN_HOME);
-                        }
-                    }
-                } else {
-                    // RESET SUPPLY — encoder-only (scroll to RESET, press encoder button).
-                    //   GT911 non-linear calibration maps the left panel (physical x=8..174)
-                    //   to cal_x=34..306, which overlaps DRAIN(92) and MODEL(214–221).
-                    //   No x-threshold can separate them; touch is unreliable for this button.
-                    // Action buttons — empirical cal_x thresholds (touch X is non-linear):
-                    //   DRAIN≈84  MODEL≈225  NET≈367  FILL≈431
-                    //   Boundaries at midpoints: 155, 296, 399
-                    //   Note: MODEL (tx≈225) is shadowed by RESET SUPPLY above; use encoder.
-                    if (ty >= 250 && ty <= 290 && tx >= 40 && tx <= 479) {
-                        if      (tx <= 155) BeginDrain();
-                        else if (tx <= 296) Screen_SetScreen(SCREEN_MODEL);
-                        else if (tx <= 399) Screen_SetScreen(SCREEN_NET);
-                        else                BeginFill();
-                        return;
-                    }
-                    // Help button in message bar
-                    if (tx >= 3 && tx <= 43 && ty >= 299 && ty <= 317) {
-                        Screen_SetScreen(SCREEN_HELP);
-                        return;
-                    }
-                }
-                break;
-            }
-            case SCREEN_HELP:
-                OnShortPress();
-                break;
-            case SCREEN_MODEL:
-            case SCREEN_NET:
-            default:
-                OnShortPress();
-                break;
-        }
-    });
-    Touch_LoadCalibration();
 
     WebServer_Init();
     WebServer_SetCommandHandler(OnWebCommand);
@@ -1234,19 +1223,17 @@ void loop()
         SetMessage(ipMsg, MSG_IDLE);
     }
 
-    // Debug: print I2C sensor status every 5 s for first 60 s after boot
+    // Debug: print sensor status every 5 s for first 60 s after boot
     static uint32_t dbgLastMs = 0;
     if (now < 60000 && now - dbgLastMs >= 5000) {
         dbgLastMs = now;
-        Serial.printf("[DBG %lus] RTC=%s  Pressure=%.2fbar  BattV=%.2fV\n",
+        Serial.printf("[DBG %lus] RTC=%s  BattV=%.2fV\n",
                       now / 1000,
                       RTC_IsRunning() ? "OK" : "FAIL",
-                      Sensors_PressureBar(),
                       Sensors_BattVoltage());
     }
 
     encoderPoll();
-    Touch_Update();
     Sensors_Update();
     Pump_UpdateRamp();
 
@@ -1309,10 +1296,6 @@ void loop()
         gDisplay.mainTankPct  = 0;
         gDisplay.volumeMl     = 0;
     }
-
-    // Pressure always reflects latest sensor reading (Sensors_Update caches at 2 Hz)
-    gDisplay.pressurePct = constrain(
-        (int)(Sensors_PressureBar() / PRESSURE_MAX_BAR * 100.0f), 0, 100);
 
     // Clear startup IP message after 6 s; then show normal idle text
     static bool ipMsgCleared = false;

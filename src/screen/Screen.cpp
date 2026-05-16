@@ -88,17 +88,10 @@ static bool gPostPump    = false;   // true = pump stopped, review screen shown
 static bool gPostIsDrain = false;   // remember fill vs drain for colour/restart
 static int  gPumpBtnSel  = 0;       // 0=STOP(running)/START(post), 1=BACK
 
-// Calibration screen state
-static int gCalPoint = 0;           // 0 = first target, 1 = second target
-
-// Help screen encoder selection: 0 = Return, 1 = Calibrate Touch
-static int gHelpSel = 0;
-
 // ── Animated bar values ──────────────────────────────────────────
 static float animSupply   = 0.0f;
 static float animMain     = 0.0f;
 static float animBatt     = 0.0f;
-static float animPressure = 0.0f;
 
 // ── Photo cache ──────────────────────────────────────────────────
 static uint16_t* photoBuf       = nullptr;
@@ -145,21 +138,6 @@ static void pillBar(int x, int y, int w, int h, float pct,
 static void dataBar(int x, int y, int w, int barH,
                     const char* lbl, float pct, uint16_t col,
                     const char* val, float markFrac = -1.0f)
-{
-    spr.setTextSize(2);
-    spr.setTextDatum(TL_DATUM);
-    spr.setTextColor(col, C_BG);
-    spr.drawString(lbl, x, y);
-    spr.setTextDatum(TR_DATUM);
-    spr.setTextColor(C_WHITE, C_BG);
-    spr.drawString(val, x + w, y);
-    pillBar(x, y + 20, w, barH, pct, col, markFrac);
-}
-
-// Compact bar row: size-2 label, bar at y+20, height barH
-static void dataBarSm(int x, int y, int w, int barH,
-                      const char* lbl, float pct, uint16_t col,
-                      const char* val, float markFrac = -1.0f)
 {
     spr.setTextSize(2);
     spr.setTextDatum(TL_DATUM);
@@ -467,24 +445,22 @@ static void renderLeftPanel(const ScreenData& d)
 // ════════════════════════════════════════════════════════════════
 // Right panel — HOME screen
 //
-// Idle: 4 data bars + 4 action buttons
+// Idle: 3 data bars + 4 action buttons
 //
-//   MODEL TANK   label y=44  bar y=64  h=14   ends 78
-//   SUPPLY TANK  label y=88  bar y=108 h=14   ends 122
-//   separator    y=130
-//   PRESSURE     label y=140 bar y=160 h=14   ends 174
-//   BATTERY      label y=192 bar y=212 h=14   ends 226
-//   action btns  y=250 h=28
+//   MODEL TANK   label y=44  bar y=64  h=18   ends 82
+//   SUPPLY TANK  label y=92  bar y=112 h=18   ends 130
+//   separator    y=140
+//   BATTERY      label y=152 bar y=172 h=24   ends 196
+//   action btns  y=212 h=44  ends 256
 //
-// Pump running: 4 compact bars (size-2 label + bar, 36px rows)
+// Pump running: 4 bars
 //
-//   MODEL TANK   label y=44  bar y=64  h=14   ends 78
-//   SUPPLY TANK  label y=88  bar y=108 h=14   ends 122
-//   separator    y=130
-//   PUMP SPEED   label y=134 bar y=154 h=12   ends 166
-//   FLOW RATE    label y=170 bar y=190 h=12   ends 202
-//   PRESSURE     label y=206 bar y=226 h=12   ends 238
-//   BATTERY      label y=242 bar y=262 h=12   ends 274
+//   MODEL TANK   label y=44  bar y=64  h=18   ends 82
+//   SUPPLY TANK  label y=92  bar y=112 h=18   ends 130
+//   separator    y=140
+//   PUMP SPEED   label y=148 bar y=168 h=16   ends 184
+//   FLOW RATE    label y=196 bar y=216 h=16   ends 232
+//   BATTERY      label y=244 bar y=264 h=16   ends 280
 // ════════════════════════════════════════════════════════════════
 static void renderRightHome(const ScreenData& d)
 {
@@ -510,7 +486,7 @@ static void renderRightHome(const ScreenData& d)
     if (d.targetMl > 0 && activeModelIndex >= 0 &&
         heliModels[activeModelIndex].tankVolumeMl > 0)
         tankMark = (float)d.targetMl / heliModels[activeModelIndex].tankVolumeMl;
-    dataBar(X, 44, W, 14, "MODEL TANK", animMain, C_BLUE, buf, tankMark);
+    dataBar(X, 44, W, 18, "MODEL TANK", animMain, C_BLUE, buf, tankMark);
 
     // ── SUPPLY TANK (both modes) ──────────────────────────────────
     if (d.supplyCapMl > 0)
@@ -520,37 +496,38 @@ static void renderRightHome(const ScreenData& d)
         snprintf(buf, sizeof(buf), "%d%%", (int)(animSupply + 0.5f));
     float supMark = (d.supplyCapMl > 0)
         ? (float)d.supplyLowMl / (float)d.supplyCapMl : -1.0f;
-    dataBar(X, 88, W, 14, "SUPPLY TANK", animSupply,
-            tankCol(animSupply), buf, supMark);
+    uint16_t supCol = (d.supplyLowMl > 0)
+        ? (d.supplyMl > d.supplyLowMl              ? C_GREEN
+         : d.supplyMl > d.supplyLowMl / 2          ? C_YELLOW
+         :                                            C_RED)
+        : tankCol(animSupply);
+    dataBar(X, 92, W, 18, "SUPPLY TANK", animSupply, supCol, buf, supMark);
 
     // Separator
-    spr.drawFastHLine(X + 4, 130, W - 8, C_SEP);
+    spr.drawFastHLine(X + 4, 140, W - 8, C_SEP);
 
-    // ── Idle: 2 more bars + buttons ───────────────────────────────
+    // ── Idle: BATTERY bar + action buttons ────────────────────────
     if (!d.pumpRunning && !gPostPump) {
 
-        snprintf(buf, sizeof(buf), "%d%%", (int)(animPressure + 0.5f));
-        dataBar(X, 140, W, 14, "PRESSURE", animPressure, C_PURPLE, buf);
-
         snprintf(buf, sizeof(buf), "%.2fV/c  %d%%", d.cellV, d.battPct);
-        dataBar(X, 192, W, 14, "BATTERY", animBatt, battCol(animBatt), buf);
+        dataBar(X, 152, W, 24, "BATTERY", animBatt, battCol(animBatt), buf);
 
         // Action buttons — draw 4 (FILL/DRAIN/MODEL/NET); HELP in msg bar; RESET in left panel.
         static const char*     kLabels[ACTION_COUNT]  = { "FILL", "DRAIN", "MODEL", "NET", "HELP", "RESET" };
         static const uint16_t  kAccent[ACTION_COUNT]  = { C_GREEN, C_ORANGE, C_BLUE, C_ACCENT, C_YELLOW, C_ACCENT };
         const int BTN_DRAW = ACTION_HELP;   // 4 buttons in strip: FILL DRAIN MODEL NET
-        const int BTN_Y  = 250;
-        const int BTN_H  = 28;
+        const int BTN_Y  = 212;
+        const int BTN_H  = 44;
         int slot = (W - 12) / BTN_DRAW;          // ~71 px per slot
         for (int i = 0; i < BTN_DRAW; i++) {
             int bx  = X + 6 + i * slot;
             int bw  = slot - 4;
             bool sel = (i == gActionSel);
             if (sel) {
-                spr.fillRoundRect(bx, BTN_Y, bw, BTN_H, 5, kAccent[i]);
+                spr.fillRoundRect(bx, BTN_Y, bw, BTN_H, 6, kAccent[i]);
                 spr.setTextColor(C_BG, kAccent[i]);
             } else {
-                spr.drawRoundRect(bx, BTN_Y, bw, BTN_H, 5, kAccent[i]);
+                spr.drawRoundRect(bx, BTN_Y, bw, BTN_H, 6, kAccent[i]);
                 spr.setTextColor(kAccent[i], C_BG);
             }
             spr.setTextDatum(MC_DATUM);
@@ -558,11 +535,11 @@ static void renderRightHome(const ScreenData& d)
             spr.drawString(kLabels[i], bx + bw / 2, BTN_Y + BTN_H / 2);
         }
 
-    // ── Pump running: 4 compact bars ─────────────────────────────
+    // ── Pump running: 4 bars ─────────────────────────────────────
     } else {
 
         snprintf(buf, sizeof(buf), "%d%%", (int)(d.pumpSpeedPct + 0.5f));
-        dataBarSm(X, 134, W, 12, "PUMP SPEED", d.pumpSpeedPct, pumpCol, buf);
+        dataBar(X, 148, W, 16, "PUMP SPEED", d.pumpSpeedPct, pumpCol, buf);
 
         float flowPct  = constrain(d.flowMlMin / 2000.0f * 100.0f, 0.0f, 100.0f);
         float flowMark = -1.0f;
@@ -572,13 +549,10 @@ static void renderRightHome(const ScreenData& d)
             if (tgt > 0) flowMark = (float)tgt / 2000.0f;
         }
         snprintf(buf, sizeof(buf), "%d ml/m", d.flowMlMin);
-        dataBarSm(X, 170, W, 12, "FLOW RATE", flowPct, pumpCol, buf, flowMark);
-
-        snprintf(buf, sizeof(buf), "%d%%", (int)(animPressure + 0.5f));
-        dataBarSm(X, 206, W, 12, "PRESSURE", animPressure, C_PURPLE, buf);
+        dataBar(X, 196, W, 16, "FLOW RATE", flowPct, pumpCol, buf, flowMark);
 
         snprintf(buf, sizeof(buf), "%.2fV/c  %d%%", d.cellV, d.battPct);
-        dataBarSm(X, 242, W, 12, "BATTERY", animBatt, battCol(animBatt), buf);
+        dataBar(X, 244, W, 16, "BATTERY", animBatt, battCol(animBatt), buf);
     }
 }
 
@@ -713,7 +687,7 @@ static const char* const kHelpLines[5][16] = {
       "  HELP   Show this help screen",
       "",
       "  Status bars: Model tank, Supply,",
-      "  Pressure & Battery level.",
+      "  and Battery level.",
       nullptr, nullptr, nullptr
     },
     { // 1 — HOME filling
@@ -827,42 +801,6 @@ static void renderHelp()
 }
 
 // ════════════════════════════════════════════════════════════════
-// Screen: CALIBRATION — 2-point touch alignment
-// ════════════════════════════════════════════════════════════════
-static void renderCalibration()
-{
-    // Target positions — must match CAL_DISP_X1/Y1/X2/Y2 in Touch.h
-    static const int kCalX[2] = {40, 440};
-    static const int kCalY[2] = {40, 280};
-    int p = constrain(gCalPoint, 0, 1);
-
-    spr.fillRect(0, CONTENT_Y, SCR_W, CONTENT_H, C_BG);
-
-    spr.setTextDatum(TC_DATUM);
-    spr.setTextSize(2);
-    spr.setTextColor(C_ACCENT, C_BG);
-    spr.drawString("TOUCH CALIBRATION", SCR_W / 2, CONTENT_Y + 12);
-
-    spr.setTextSize(2);
-    spr.setTextColor(C_WHITE, C_BG);
-    spr.drawString("Tap the crosshair", SCR_W / 2, CONTENT_Y + 40);
-
-    char buf[16];
-    snprintf(buf, sizeof(buf), "Point %d of 2", p + 1);
-    spr.setTextSize(2);
-    spr.setTextColor(C_GREY, C_BG);
-    spr.drawString(buf, SCR_W / 2, CONTENT_Y + 62);
-
-    // Crosshair at target position
-    int cx = kCalX[p], cy = kCalY[p];
-    const int ARM = 18;
-    spr.drawFastHLine(cx - ARM, cy, ARM * 2 + 1, C_ACCENT);
-    spr.drawFastVLine(cx, cy - ARM, ARM * 2 + 1, C_ACCENT);
-    spr.drawCircle(cx, cy, 10, C_ACCENT);
-    spr.drawCircle(cx, cy, 11, C_ACCENT);
-}
-
-// ════════════════════════════════════════════════════════════════
 // Screen: NETWORK / OTA
 //
 //  Two side-by-side cards (y=44, h=112):
@@ -964,13 +902,11 @@ void Screen_SetNetworkIP(const char* sta, const char* ap)
 ScreenID Screen_CurrentScreen() { return gCurScreen; }
 int      Screen_GetActionSel()  { return gActionSel; }
 uint32_t Screen_GetScreenAge()  { return millis() - gScreenChgMs; }
-void     Screen_SetCalPoint(int p) { gCalPoint = constrain(p, 0, 1); }
 
 void Screen_SetScreen(ScreenID s)
 {
     if (s == SCREEN_HELP) {
         gHelpFromScreen = gCurScreen;   // remember which screen opened help
-        gHelpSel        = 0;
     } else {
         gPostPump   = false;
         gPumpBtnSel = 0;
@@ -1092,7 +1028,6 @@ void Screen_Update(const ScreenData& data)
     animSupply   += (data.outerTankPct       - animSupply)   * spd;
     animMain     += (data.mainTankPct        - animMain)     * spd;
     animBatt     += ((float)data.battPct     - animBatt)     * spd;
-    animPressure += (data.pressurePct        - animPressure) * spd;
 
     // Reload photo when model changes (HOME screen only)
     if (gCurScreen == SCREEN_HOME &&
@@ -1124,10 +1059,6 @@ void Screen_Update(const ScreenData& data)
         case SCREEN_HELP:
             renderHeader("HELP");
             renderHelp();
-            break;
-        case SCREEN_CAL:
-            renderHeader("CALIBRATION");
-            renderCalibration();
             break;
         default: break;
     }

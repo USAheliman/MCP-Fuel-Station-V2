@@ -35,6 +35,10 @@ static File     otaUploadFile;
 static size_t   otaUploadBytes    = 0;
 static bool     otaUploadOk       = false;
 
+// ── Filesystem file upload state ─────────────────────────────────
+static File     fsUploadFile;
+static bool     fsUploadOk        = false;
+
 // ── Embedded OTA web page ─────────────────────────────────────────
 static const char OTA_HTML[] PROGMEM = R"OTA(<!DOCTYPE html>
 <html lang="en"><head>
@@ -382,6 +386,34 @@ void WebServer_Init()
         else if (upload.status == UPLOAD_FILE_END && uf)
             uf.close();
     });
+
+    // Generic web-file OTA: POST /fs/upload with multipart field "file"
+    // Filename from upload header determines LittleFS path (must not start /ota/)
+    httpServer.on("/fs/upload", HTTP_POST,
+        []() {
+            if (fsUploadOk)
+                httpServer.send(200, "application/json", "{\"ok\":true}");
+            else
+                httpServer.send(500, "application/json", "{\"ok\":false,\"error\":\"Upload failed\"}");
+        },
+        []() {
+            HTTPUpload& up = httpServer.upload();
+            if (up.status == UPLOAD_FILE_START) {
+                fsUploadOk = false;
+                String path = up.filename;
+                if (!path.startsWith("/")) path = "/" + path;
+                if (path.startsWith("/ota/")) return;   // protect OTA dir
+                if (LittleFS.exists(path)) LittleFS.remove(path);
+                fsUploadFile = LittleFS.open(path, "w");
+                Serial.printf("FS upload: %s\n", path.c_str());
+            } else if (up.status == UPLOAD_FILE_WRITE) {
+                if (fsUploadFile) fsUploadFile.write(up.buf, up.currentSize);
+            } else if (up.status == UPLOAD_FILE_END) {
+                if (fsUploadFile) { fsUploadFile.close(); fsUploadOk = true; }
+                Serial.printf("FS upload done: %u bytes\n", up.totalSize);
+            }
+        }
+    );
 
     httpServer.on("/debug/fs", HTTP_GET, [](){
         String out;

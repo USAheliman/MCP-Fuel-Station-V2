@@ -165,8 +165,8 @@ void LoadStationFromFS()
 // ── Forward declarations ──────────────────────────────────────────
 void BeginFill();
 void BeginDrain();
-void StopFill();
-void BeginOverflowPurge();
+void StopFill(const char* reason = "MANUAL");
+void BeginOverflowPurge(const char* reason);
 static void BuzzerShutdown();
 
 // ── JSON string escape helper ─────────────────────────────────────
@@ -296,8 +296,8 @@ static String BuildWebStateJson()
     j += "\"netVol\":"      + jStr((String(stFillMl > stDrainMl ? (stFillMl - stDrainMl) / 1000.0f : 0.0f, 1) + "L").c_str()) + ",";
     j += "\"capMl\":"       + String(supplyTankCapacityMl)  + ",";
     j += "\"lowMl\":"       + String(supplyLowThresholdMl)  + ",";
-    j += "\"fillCalRaw\":"  + String((int)(fillPulsesPerLiter  * 10)) + ",";
-    j += "\"drainCalRaw\":" + String((int)(drainPulsesPerLiter * 10)) + ",";
+    j += "\"fillCalRaw\":"  + String((int)fillPulsesPerLiter)  + ",";
+    j += "\"drainCalRaw\":" + String((int)drainPulsesPerLiter) + ",";
     j += "\"flowDropRaw\":" + String(tankEmptyFlowDropPct)  + ",";
     j += "\"emptyDelayRaw\":" + String((int)(tankEmptyMinRunMs / 1000)) + ",";
     j += "\"cutoffRaw\":"   + String((int)(cutoffVPerCell * 100));
@@ -344,19 +344,25 @@ void OnWebCommand(const String& raw)
         int pCmd = pendingWebCmd;
         pendingWebCmd = 0;
         switch (pCmd) {
-            case 7010: supplyTankCapacityMl  = max(100, cmd); SaveStationToFS(); break;
-            case 7012: supplyLowThresholdMl  = max(0,   cmd); SaveStationToFS(); break;
+            case 7010: supplyTankCapacityMl  = max(100, cmd); SaveStationToFS();
+                Logger_Write(LOG_INFO, CAT_SYSTEM, "SUPPLY_CAP_SET", nullptr, (float)supplyTankCapacityMl); break;
+            case 7012: supplyLowThresholdMl  = max(0,   cmd); SaveStationToFS();
+                Logger_Write(LOG_INFO, CAT_SYSTEM, "SUPPLY_LOW_SET", nullptr, (float)supplyLowThresholdMl); break;
             case 7013: tankEmptyFlowDropPct  = constrain(cmd, 5, 90); SaveStationToFS(); break;
             case 7014: tankEmptyMinRunMs = (uint32_t)constrain(cmd, 1, 60) * 1000; SaveStationToFS(); break;
-            case 7016: cutoffVPerCell = constrain(cmd / 100.0f, 3.0f, 4.2f); SaveStationToFS(); break;
-            case 7020: fillPulsesPerLiter  = max(1.0f, cmd / 10.0f); SaveStationToFS(); break;
-            case 7021: drainPulsesPerLiter = max(1.0f, cmd / 10.0f); SaveStationToFS(); break;
+            case 7016: cutoffVPerCell = constrain(cmd / 100.0f, 3.0f, 4.2f); SaveStationToFS();
+                Logger_Write(LOG_INFO, CAT_POWER, "CUTOFF_SET", nullptr, cutoffVPerCell); break;
+            case 7020: fillPulsesPerLiter  = max(1.0f, (float)cmd); SaveStationToFS();
+                Logger_Write(LOG_INFO, CAT_SENSOR, "FILL_CAL_MANUAL", nullptr, fillPulsesPerLiter); break;
+            case 7021: drainPulsesPerLiter = max(1.0f, (float)cmd); SaveStationToFS();
+                Logger_Write(LOG_INFO, CAT_SENSOR, "DRAIN_CAL_MANUAL", nullptr, drainPulsesPerLiter); break;
             case 7032:
                 if (cmd > 0 && fillCalSnapshot > 0)
                     fillPulsesPerLiter = (float)fillCalSnapshot / (float)cmd * 1000.0f;
                 fillCalActive = false;
                 SaveStationToFS();
                 Serial.printf("Fill cal: %.1f ppl\n", fillPulsesPerLiter);
+                Logger_Write(LOG_INFO, CAT_SENSOR, "FILL_CAL_COMMIT", nullptr, fillPulsesPerLiter);
                 break;
             case 7035:
                 if (cmd > 0 && drainCalSnapshot > 0)
@@ -364,17 +370,24 @@ void OnWebCommand(const String& raw)
                 drainCalActive = false;
                 SaveStationToFS();
                 Serial.printf("Drain cal: %.1f ppl\n", drainPulsesPerLiter);
+                Logger_Write(LOG_INFO, CAT_SENSOR, "DRAIN_CAL_COMMIT", nullptr, drainPulsesPerLiter);
                 break;
-            case 6001: heliModels[activeModelIndex].tankVolumeMl = max(100, cmd); HeliLib_Save(activeModelIndex); break;
-            case 6002: heliModels[activeModelIndex].fillSpeed    = constrain(cmd, 50, 3000); HeliLib_Save(activeModelIndex); break;
-            case 6003: heliModels[activeModelIndex].hasTankSensor = (cmd != 0); HeliLib_Save(activeModelIndex); break;
-            case 6004: heliModels[activeModelIndex].purgeSecs    = constrain(cmd, 0, 30); HeliLib_Save(activeModelIndex); break;
-            case 6005: heliModels[activeModelIndex].drainSpeed   = constrain(cmd, 50, 3000); HeliLib_Save(activeModelIndex); break;
+            case 6001: heliModels[activeModelIndex].tankVolumeMl = max(100, cmd); HeliLib_Save(activeModelIndex);
+                Logger_Write(LOG_INFO, CAT_SYSTEM, "MODEL_TANK_SET", heliModels[activeModelIndex].name, (float)heliModels[activeModelIndex].tankVolumeMl); break;
+            case 6002: heliModels[activeModelIndex].fillSpeed    = constrain(cmd, 50, 3000); HeliLib_Save(activeModelIndex);
+                Logger_Write(LOG_INFO, CAT_SYSTEM, "MODEL_FILL_SPD", heliModels[activeModelIndex].name, (float)heliModels[activeModelIndex].fillSpeed); break;
+            case 6003: heliModels[activeModelIndex].hasTankSensor = (cmd != 0); HeliLib_Save(activeModelIndex);
+                Logger_Write(LOG_INFO, CAT_SYSTEM, "MODEL_SENSOR_SET", heliModels[activeModelIndex].name, (float)heliModels[activeModelIndex].hasTankSensor); break;
+            case 6004: heliModels[activeModelIndex].purgeSecs    = constrain(cmd, 0, 30); HeliLib_Save(activeModelIndex);
+                Logger_Write(LOG_INFO, CAT_SYSTEM, "MODEL_PURGE_SET", heliModels[activeModelIndex].name, (float)heliModels[activeModelIndex].purgeSecs); break;
+            case 6005: heliModels[activeModelIndex].drainSpeed   = constrain(cmd, 50, 3000); HeliLib_Save(activeModelIndex);
+                Logger_Write(LOG_INFO, CAT_SYSTEM, "MODEL_DRAIN_SPD", heliModels[activeModelIndex].name, (float)heliModels[activeModelIndex].drainSpeed); break;
             case 8020:
                 if (cmd >= 0 && cmd < numModels) {
                     activeModelIndex = cmd;
                     HeliLib_SaveActiveIndex();
                     strncpy(gDisplay.modelName, heliModels[activeModelIndex].name, sizeof(gDisplay.modelName) - 1);
+                    Logger_Write(LOG_INFO, CAT_SYSTEM, "MODEL_SELECT", heliModels[activeModelIndex].name);
                 }
                 break;
         }
@@ -387,20 +400,31 @@ void OnWebCommand(const String& raw)
         case 11: BeginFill();  break;
         case 2:  break;  // main→drain navigation, no hardware action
         case 12: BeginDrain(); break;
-        case 3:  StopFill();   break;
-        case 7011: supplyTankRemainingMl = supplyTankCapacityMl; SaveStationToFS(); break;
-        case 7018: lowBatteryLatched = false; lowBattCount = 0; SetMessage("Batt latch cleared", MSG_IDLE); break;
+        case 3:  StopFill("WEB");   break;
+        case 7011:
+            supplyTankRemainingMl = supplyTankCapacityMl;
+            SaveStationToFS();
+            Logger_Write(LOG_INFO, CAT_SYSTEM, "SUPPLY_RESET", "web");
+            break;
+        case 7018:
+            lowBatteryLatched = false;
+            lowBattCount = 0;
+            SetMessage("Batt latch cleared", MSG_IDLE);
+            Logger_Write(LOG_INFO, CAT_POWER, "BATT_LATCH_CLEARED", "web");
+            break;
         case 7030:
             noInterrupts(); fillPulses = 0; interrupts();
             fillCalSnapshot = 0;
             fillCalActive   = true;
             fillCalStartMs  = millis();
+            Logger_Write(LOG_INFO, CAT_SENSOR, "FILL_CAL_START", heliModels[activeModelIndex].name);
             BeginFill();
             break;
         case 7031:
             noInterrupts(); fillCalSnapshot = fillPulses; interrupts();
             fillCalActive = false;
-            StopFill();
+            Logger_Write(LOG_INFO, CAT_SENSOR, "FILL_CAL_STOP", nullptr, (float)fillCalSnapshot);
+            StopFill("CAL_STOP");
             break;
         case 7032: pendingWebCmd = 7032; break;
         case 7033:
@@ -408,12 +432,14 @@ void OnWebCommand(const String& raw)
             drainCalSnapshot = 0;
             drainCalActive   = true;
             drainCalStartMs  = millis();
+            Logger_Write(LOG_INFO, CAT_SENSOR, "DRAIN_CAL_START", heliModels[activeModelIndex].name);
             BeginDrain();
             break;
         case 7034:
             noInterrupts(); drainCalSnapshot = drainPulses; interrupts();
             drainCalActive = false;
-            StopFill();
+            Logger_Write(LOG_INFO, CAT_SENSOR, "DRAIN_CAL_STOP", nullptr, (float)drainCalSnapshot);
+            StopFill("CAL_STOP");
             break;
         case 7035: pendingWebCmd = 7035; break;
         // Two-step station / model param commands:
@@ -497,11 +523,12 @@ void BeginDrain()
     SetMessage("Draining", MSG_DRAINING);
 }
 
-void StopFill()
+void StopFill(const char* reason)
 {
     gWaitingForSensor = false;
-    Logger_Write(LOG_INFO, CAT_PUMP, "FILL_STOP",
-                 heliModels[activeModelIndex].name, lastFillVolumeMl);
+    bool wasDrain = drainClosedLoopActive || (autoFillSequence == AF_PURGING);
+    Logger_Write(LOG_INFO, CAT_PUMP, wasDrain ? "DRAIN_STOP" : "FILL_STOP", reason,
+                 (float)(wasDrain ? lastDrainVolumeMl : lastFillVolumeMl));
     Logger_ClearPumpState();
     Pump_Stop();
     SaveStationToFS();
@@ -554,8 +581,18 @@ static void UpdateFillFlow(uint32_t now)
 
     // Auto-stop conditions — all bypassed during calibration
     if (PumpEnabled && autoFillSequence != AF_PURGING && !fillCalActive) {
+        if (supplyTankRemainingMl <= 0) {
+            Pump_Stop();
+            autoFillSequence = AF_NONE;
+            Logger_Write(LOG_WARN, CAT_PUMP, "FILL_STOP", "SUPPLY_EMPTY", (float)lastFillVolumeMl);
+            Logger_ClearPumpState();
+            SaveStationToFS();
+            SetMessage("Supply tank empty — fill stopped!", MSG_WARN);
+            Screen_SetPostPump(false);
+            return;
+        }
         if (targetFillMl > 0 && lastFillVolumeMl >= targetFillMl) {
-            Pump_Stop(); BeginOverflowPurge(); return;
+            Pump_Stop(); BeginOverflowPurge("VOLUME_REACHED"); return;
         }
         if (heliModels[activeModelIndex].hasTankSensor && !Sensors_IsTankSensorFitted()) {
             Pump_Stop();
@@ -569,16 +606,15 @@ static void UpdateFillFlow(uint32_t now)
             return;
         }
         if (heliModels[activeModelIndex].hasTankSensor && Sensors_IsTankSensorFitted() && Sensors_IsTankFull()) {
-            Pump_Stop(); BeginOverflowPurge(); return;
+            Pump_Stop(); BeginOverflowPurge("TANK_FULL"); return;
         }
     }
 }
 
 // ── Overflow purge (ported from V1) ──────────────────────────────
-void BeginOverflowPurge()
+void BeginOverflowPurge(const char* reason)
 {
-    Logger_Write(LOG_INFO, CAT_PUMP, "FILL_COMPLETE",
-                 heliModels[activeModelIndex].name, lastFillVolumeMl);
+    Logger_Write(LOG_INFO, CAT_PUMP, "FILL_COMPLETE", reason, (float)lastFillVolumeMl);
     int secs = heliModels[activeModelIndex].purgeSecs;
     if (secs <= 0) {
         Logger_ClearPumpState();
@@ -710,7 +746,7 @@ static void UpdateAutoSequence(uint32_t now)
             BeginFill();
         }
     }
-    if (autoFillSequence == AF_FILLING && !PumpEnabled) BeginOverflowPurge();
+    if (autoFillSequence == AF_FILLING && !PumpEnabled) BeginOverflowPurge("AUTO_FILL");
     if (autoFillSequence == AF_PURGING && PumpEnabled) {
         if ((now - purgeStartMs) >= (uint32_t)(heliModels[activeModelIndex].purgeSecs * 1000)) {
             Pump_Stop();
@@ -821,7 +857,7 @@ void OnShortPress()
 
     if (PumpEnabled) {
         // STOP is always highlighted while pump runs — button always stops
-        StopFill();
+        StopFill("ENCODER");
         bool wasDrain = drainClosedLoopActive || (autoFillSequence == AF_PURGING);
         Screen_SetPostPump(wasDrain);
         Power_UpdateActivity();
@@ -866,6 +902,7 @@ void OnShortPress()
             strncpy(gDisplay.modelName, heliModels[activeModelIndex].name,
                     sizeof(gDisplay.modelName) - 1);
             SetMessage(heliModels[activeModelIndex].name, MSG_IDLE);
+            Logger_Write(LOG_INFO, CAT_SYSTEM, "MODEL_SELECT", heliModels[activeModelIndex].name);
             pendingModelSave = true;
             break;
         case SCREEN_NET:
@@ -885,7 +922,7 @@ void OnShortPress()
 void OnBackPress()
 {
     if (PumpEnabled) {
-        StopFill();
+        StopFill("BACK_HOLD");
         // Long-hold back while pumping = stop and go straight home
         Screen_ClearPostPump();
         Screen_SetScreen(SCREEN_HOME);
@@ -1058,8 +1095,14 @@ void setup()
                     // Left panel X maps non-linearly: full STOP button → cal_x 8..300,
                     // full BACK button → cal_x 318..479.  Split at 305.
                     if (ty >= 246 && ty <= 285) {
-                        if (tx <= 228) OnShortPress();   // STOP
-                        else           OnBackPress();    // BACK
+                        if (tx <= 228) {
+                            StopFill("TOUCH");
+                            bool wasDrain = drainClosedLoopActive || (autoFillSequence == AF_PURGING);
+                            Screen_SetPostPump(wasDrain);
+                            Power_UpdateActivity();
+                        } else {
+                            OnBackPress();    // BACK
+                        }
                     }
                 } else if (Screen_IsPostPump()) {
                     if (ty >= 246 && ty <= 285) {

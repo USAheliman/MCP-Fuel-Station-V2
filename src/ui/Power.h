@@ -7,8 +7,8 @@
 // FALLING-edge ISR captures press even during ~60ms display refresh
 // ═══════════════════════════════════════════════════════════════════
 
-#define BTN_DEBOUNCE_MS    50
-#define BTN_SHORT_PRESS_MS 30
+#define BTN_DEBOUNCE_MS   100
+#define BTN_SHORT_PRESS_MS 80
 #define BTN_BACK_PRESS_MS  3000
 #define BTN_LONG_PRESS_MS  8000
 #define SCREEN_STANDBY_MS  600000UL

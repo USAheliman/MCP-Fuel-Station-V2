@@ -90,14 +90,18 @@ void Power_Update()
     uint32_t now     = millis();
     bool     btnHeld = (digitalRead(PIN_POLOLU_A_GPIO) == LOW);
 
-    // Consume ISR press timestamp
+    // Consume ISR press timestamp — only if pin is still LOW.
+    // If GPIO16 returned HIGH before this loop ran, the edge was a noise spike
+    // shorter than one loop cycle (≤60 ms during display render); discard it.
     if (isrHasFall && !btnWasPressed) {
         noInterrupts();
-        btnPressMs = isrPressMs;
         isrHasFall = false;
         interrupts();
-        btnWasPressed  = true;
-        backPressFired = false;
+        if (digitalRead(PIN_POLOLU_A_GPIO) == LOW) {
+            btnPressMs     = millis();   // measure hold from now, not from ISR
+            btnWasPressed  = true;
+            backPressFired = false;
+        }
     }
 
     if (btnWasPressed) {

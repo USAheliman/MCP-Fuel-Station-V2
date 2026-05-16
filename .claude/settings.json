@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(cd \"c:\\\\Users\\\\Mehul\\\\Projects\\\\Github\\\\MCP-FuelStation-V2\"; & \"$env:USERPROFILE\\\\.platformio\\\\penv\\\\Scripts\\\\pio.exe\" run -e esp32-s3-devkitc-1 -t upload 2>&1 | Select-String \"SUCCESS|error:\")",
+      "Bash(git commit -m ' *)",
+      "PowerShell(cd \"c:\\\\Users\\\\Mehul\\\\Projects\\\\Github\\\\MCP-FuelStation-V2\"; & \"$env:USERPROFILE\\\\.platformio\\\\penv\\\\Scripts\\\\platformio.exe\" run --environment esp32-s3-ota --target upload 2>&1)",
+      "PowerShell(cd \"c:\\\\Users\\\\Mehul\\\\Projects\\\\Github\\\\MCP-FuelStation-V2\"; & \"$env:USERPROFILE\\\\.platformio\\\\penv\\\\Scripts\\\\pio.exe\" run -e esp32-s3-devkitc-1 2>&1 | Select-Object -Last 8)",
+      "PowerShell(cd \"c:\\\\Users\\\\Mehul\\\\Projects\\\\Github\\\\MCP-FuelStation-V2\"; & \"$env:USERPROFILE\\\\.platformio\\\\penv\\\\Scripts\\\\pio.exe\" run -e esp32-s3-ota --target upload 2>&1 | Select-Object -Last 10)",
+      "PowerShell(cd \"c:\\\\Users\\\\Mehul\\\\Projects\\\\Github\\\\MCP-FuelStation-V2\"; & \"$env:USERPROFILE\\\\.platformio\\\\penv\\\\Scripts\\\\pio.exe\" run -e esp32-s3-ota --target upload 2>&1 | Select-Object -Last 8)",
+      "PowerShell(cd \"c:\\\\Users\\\\Mehul\\\\Projects\\\\Github\\\\MCP-FuelStation-V2\"; & \"$env:USERPROFILE\\\\.platformio\\\\penv\\\\Scripts\\\\pio.exe\" run -e esp32-s3-devkitc-1 2>&1 | Select-Object -Last 6)",
+      "PowerShell(cd \"c:\\\\Users\\\\Mehul\\\\Projects\\\\Github\\\\MCP-FuelStation-V2\"; & \"$env:USERPROFILE\\\\.platformio\\\\penv\\\\Scripts\\\\pio.exe\" run -e esp32-s3-ota --target upload 2>&1 | Select-Object -Last 6)",
+      "Bash(rmdir \"src\\\\display\")"
+    ]
+  }
+}

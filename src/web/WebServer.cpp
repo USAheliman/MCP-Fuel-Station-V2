@@ -11,8 +11,8 @@
 
 // ═══════════════════════════════════════════════════════════════════
 // MCP Fuel Station V2 — Web Server
-// Connects to HOME_SSID (SilverLining) + always raises AP fallback.
-// REST API, WebSocket live data, and OTA firmware management.
+// AP always active. Home WiFi credentials loaded from /wifi.json.
+// REST API, WebSocket live data, OTA firmware, and WiFi setup.
 // OTA page: http://<ip>/ota  or  http://fuelstation.local/ota
 // ═══════════════════════════════════════════════════════════════════
 
@@ -20,6 +20,38 @@ static WebServer        httpServer(80);
 static WebSocketsServer wsServer(81);
 static String           lastJsonState = "{}";
 static void           (*sCmdHandler)(const String&) = nullptr;
+
+// ── WiFi credential store ─────────────────────────────────────────
+#define WIFI_CFG "/wifi.json"
+static String gWifiSSID = "";
+static String gWifiPass = "";
+static bool   gWifiRestartPending = false;
+
+static void loadWifiCredentials()
+{
+    if (!LittleFS.exists(WIFI_CFG)) return;
+    File f = LittleFS.open(WIFI_CFG, "r");
+    if (!f) return;
+    JsonDocument doc;
+    if (deserializeJson(doc, f) == DeserializationError::Ok) {
+        gWifiSSID = doc["ssid"] | "";
+        gWifiPass = doc["pass"] | "";
+    }
+    f.close();
+    Serial.printf("WiFi config loaded: SSID='%s'\n", gWifiSSID.c_str());
+}
+
+static void saveWifiCredentials(const String& ssid, const String& pass)
+{
+    File f = LittleFS.open(WIFI_CFG, "w");
+    if (!f) return;
+    f.printf("{\"ssid\":\"%s\",\"pass\":\"%s\"}", ssid.c_str(), pass.c_str());
+    f.close();
+    gWifiSSID = ssid;
+    gWifiPass = pass;
+}
+
+String WebServer_GetSavedSSID() { return gWifiSSID; }
 
 void WebServer_SetCommandHandler(void (*fn)(const String& cmd)) { sCmdHandler = fn; }
 
@@ -260,15 +292,19 @@ static void syncModel(int idx);
 // ── Init ──────────────────────────────────────────────────────────
 void WebServer_Init()
 {
+    loadWifiCredentials();
+
     // AP mode — always available (field fallback)
     WiFi.mode(WIFI_AP_STA);
     WiFi.softAP(AP_SSID, AP_PASS);
     Serial.printf("AP: %s  IP: %s\n", AP_SSID, WiFi.softAPIP().toString().c_str());
 
-    // Home WiFi — start async; caller checks WL_CONNECTED in loop()
-    if (strlen(HOME_SSID) > 0) {
-        Serial.printf("Connecting to %s (async)\n", HOME_SSID);
-        WiFi.begin(HOME_SSID, HOME_PASS);
+    // Home WiFi — connect if credentials saved, else stay AP-only
+    if (gWifiSSID.length() > 0) {
+        Serial.printf("Connecting to %s (async)\n", gWifiSSID.c_str());
+        WiFi.begin(gWifiSSID.c_str(), gWifiPass.c_str());
+    } else {
+        Serial.println("No home WiFi configured — AP only");
     }
 
     if (MDNS.begin("fuelstation"))
@@ -572,6 +608,46 @@ void WebServer_Init()
         httpServer.send(200, "application/json", "{\"ok\":true}");
     });
 
+    // WiFi credential update — saves to /wifi.json and schedules restart
+    httpServer.on("/api/wifi", HTTP_POST, []() {
+        httpServer.sendHeader("Access-Control-Allow-Origin", "*");
+        String body = httpServer.arg("plain");
+        JsonDocument doc;
+        if (deserializeJson(doc, body) != DeserializationError::Ok) {
+            httpServer.send(400, "application/json", "{\"ok\":false,\"error\":\"Bad JSON\"}");
+            return;
+        }
+        String ssid = doc["ssid"] | "";
+        String pass = doc["pass"] | "";
+        if (ssid.length() == 0) {
+            httpServer.send(400, "application/json", "{\"ok\":false,\"error\":\"SSID required\"}");
+            return;
+        }
+        saveWifiCredentials(ssid, pass);
+        Logger_Write(LOG_INFO, CAT_NETWORK, "WIFI_CFG_SAVED", ssid.c_str());
+        httpServer.send(200, "application/json", "{\"ok\":true}");
+        gWifiRestartPending = true;
+    });
+
+    httpServer.on("/api/wifi", HTTP_DELETE, []() {
+        LittleFS.remove(WIFI_CFG);
+        gWifiSSID = "";
+        gWifiPass = "";
+        Logger_Write(LOG_INFO, CAT_NETWORK, "WIFI_CFG_CLEARED", nullptr);
+        httpServer.send(200, "application/json", "{\"ok\":true}");
+        gWifiRestartPending = true;
+    });
+
+    // WiFi status — returns saved SSID and current connection state
+    httpServer.on("/api/wifi", HTTP_GET, []() {
+        httpServer.sendHeader("Access-Control-Allow-Origin", "*");
+        bool connected = (WiFi.status() == WL_CONNECTED);
+        String ip = connected ? WiFi.localIP().toString() : "";
+        String json = "{\"ssid\":\"" + gWifiSSID + "\",\"connected\":" +
+                      (connected ? "true" : "false") + ",\"ip\":\"" + ip + "\"}";
+        httpServer.send(200, "application/json", json);
+    });
+
     httpServer.onNotFound(handleNotFound);
     const char* hdr[] = {"Content-Length", "Content-Type"};
     httpServer.collectHeaders(hdr, 2);
@@ -595,6 +671,13 @@ void WebServer_Update()
             delay(200);
             esp_restart();
         }
+    }
+
+    // Deferred WiFi config restart — response was already sent
+    if (gWifiRestartPending) {
+        gWifiRestartPending = false;
+        delay(500);
+        esp_restart();
     }
 }
 

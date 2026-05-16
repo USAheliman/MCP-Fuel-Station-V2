@@ -805,6 +805,37 @@
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-title">Home WiFi</div>
+    <div class="val-row">
+      <span class="val-label">Status</span>
+      <span class="val-value" id="wifi-status-label">—</span>
+    </div>
+    <div class="val-row">
+      <span class="val-label">Saved SSID</span>
+      <span class="val-value accent" id="wifi-saved-ssid">—</span>
+    </div>
+    <div style="margin-top:12px">
+      <div style="font-size:11px;color:var(--text2);margin-bottom:6px">SSID</div>
+      <input type="text" id="wifi-ssid-inp" autocomplete="off" autocorrect="off" spellcheck="false"
+             style="width:100%;box-sizing:border-box;background:var(--panel2);border:1px solid var(--accent);border-radius:8px;color:var(--text);font-size:14px;padding:8px 10px;outline:none;margin-bottom:10px"
+             placeholder="Network name">
+      <div style="font-size:11px;color:var(--text2);margin-bottom:6px">Password</div>
+      <div style="position:relative">
+        <input type="password" id="wifi-pass-inp" autocomplete="new-password"
+               style="width:100%;box-sizing:border-box;background:var(--panel2);border:1px solid var(--accent);border-radius:8px;color:var(--text);font-size:14px;padding:8px 36px 8px 10px;outline:none"
+               placeholder="Password">
+        <span id="wifi-pass-eye" ontouchstart="event.preventDefault();toggleWifiPass()" onclick="toggleWifiPass()"
+              style="position:absolute;right:10px;top:50%;transform:translateY(-50%);cursor:pointer;color:var(--text2);font-size:16px;user-select:none">👁</span>
+      </div>
+    </div>
+    <div id="wifi-msg" style="font-size:11px;color:var(--yellow);margin-top:8px;display:none"></div>
+    <div class="btn-row" style="margin-top:12px">
+      <button type="button" class="btn btn-start" style="flex:1" ontouchstart="event.preventDefault();saveWifi()" onclick="saveWifi()">SAVE &amp; RESTART</button>
+      <button type="button" class="btn btn-stop"  style="flex:0 0 auto;padding:10px 14px" ontouchstart="event.preventDefault();forgetWifi()" onclick="forgetWifi()">FORGET</button>
+    </div>
+  </div>
+
 </div>
 <div id="page-lowbat" class="page">
   <div id="lowbat-icon">🔋</div>
@@ -1162,6 +1193,62 @@ function resetSupplyFull() {
   if (station_vals.cap > 0) set('st-rem', station_vals.cap.toFixed(1) + 'L');
 }
 
+// ── WiFi settings ────────────────────────────────────────────────────
+function loadWifiStatus() {
+  fetch(BASE + '/api/wifi').then(function(r) { return r.json(); }).then(function(d) {
+    set('wifi-saved-ssid', d.ssid || 'Not configured');
+    const lbl = document.getElementById('wifi-status-label');
+    if (lbl) {
+      if (d.connected) {
+        lbl.textContent = 'Connected (' + d.ip + ')';
+        lbl.style.color = 'var(--green)';
+      } else if (d.ssid) {
+        lbl.textContent = 'Not connected';
+        lbl.style.color = 'var(--yellow)';
+      } else {
+        lbl.textContent = 'AP only';
+        lbl.style.color = 'var(--text2)';
+      }
+    }
+    const inp = document.getElementById('wifi-ssid-inp');
+    if (inp && d.ssid) inp.value = d.ssid;
+  }).catch(function() {});
+}
+
+function toggleWifiPass() {
+  const inp = document.getElementById('wifi-pass-inp');
+  if (!inp) return;
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+}
+
+async function saveWifi() {
+  const ssid = (document.getElementById('wifi-ssid-inp').value || '').trim();
+  const pass = document.getElementById('wifi-pass-inp').value || '';
+  if (!ssid) { alert('Enter an SSID'); return; }
+  const msg = document.getElementById('wifi-msg');
+  try {
+    const r = await fetch(BASE + '/api/wifi', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ssid: ssid, pass: pass })
+    });
+    if (!r.ok) { alert('Save failed: ' + r.status); return; }
+    if (msg) { msg.textContent = 'Saved — restarting in 5s…'; msg.style.display = ''; }
+    setTimeout(function() { location.reload(); }, 5000);
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function forgetWifi() {
+  if (!confirm('Remove saved WiFi credentials?')) return;
+  const msg = document.getElementById('wifi-msg');
+  try {
+    const r = await fetch(BASE + '/api/wifi', { method: 'DELETE' });
+    if (!r.ok) { alert('Failed: ' + r.status); return; }
+    if (msg) { msg.textContent = 'Credentials cleared — restarting in 5s…'; msg.style.display = ''; }
+    setTimeout(function() { location.reload(); }, 5000);
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
 function clearBattLatch() {
   sendCmd(7018);
   showPage('main');
@@ -1337,7 +1424,8 @@ function showPage(name) {
   });
   currentPage = name;
   userNavigated = true;
-  if (name === 'setup') fetchModelList();
+  if (name === 'setup')   fetchModelList();
+  if (name === 'station') loadWifiStatus();
 }
 
 // ── Map page numbers to page names ───────────────────────────────────────────

@@ -743,11 +743,11 @@ static const char* const kHelpLines[5][16] = {
       "",
       "  Access Point (always active):",
       "   SSID: MCP-FuelStation-V2",
+      "   Pass: fuelpump1",
       "   URL:  fuelstation.local",
       "",
       "  Home WiFi: IP shown when live.",
       "   Same URL works home network.",
-      "",
       "  WEB PAGES at fuelstation.local:",
       "   Main    Status dashboard",
       "   Fill/Drain  Pump control",
@@ -839,9 +839,9 @@ static void renderNetwork()
     spr.setTextColor(C_WHITE, C_HDR);
     spr.drawString(gNetApIP[0] ? gNetApIP : "---", cx, CARD_Y + 58);
 
-    spr.setTextSize(1);
-    spr.setTextColor(C_GREEN, C_HDR);
-    spr.drawString("Always active", cx, CARD_Y + 90);
+    spr.setTextSize(2);
+    spr.setTextColor(C_WHITE, C_HDR);
+    spr.drawString("pw: fuelpump1", cx, CARD_Y + 90);
 
     // ── Home WiFi card ───────────────────────────────────────────
     bool conn = strlen(gNetStaIP) > 0 && strcmp(gNetStaIP, "0.0.0.0") != 0;
@@ -861,31 +861,40 @@ static void renderNetwork()
     spr.setTextColor(C_WHITE, C_HDR);
     spr.drawString(conn ? gNetStaIP : "---", rx, CARD_Y + 58);
 
-    spr.setTextSize(1);
-    spr.setTextColor(C_GREY, C_HDR);
+    spr.setTextSize(2);
+    spr.setTextColor(C_WHITE, C_HDR);
     spr.drawString(conn ? "via home network" : "Use AP to connect", rx, CARD_Y + 90);
 
     // ── Event Log card ───────────────────────────────────────────
     const int LOG_Y = CARD_Y + CARD_H + 10;    // 166
-    const int LOG_H = 68;
+    const int LOG_H = 72;                       // bottom at y=238
 
     spr.fillRoundRect(8, LOG_Y, SCR_W - 16, LOG_H, 6, C_HDR);
     spr.drawRoundRect(8, LOG_Y, SCR_W - 16, LOG_H, 6, C_PURPLE);
 
-    spr.setTextSize(1);
+    spr.setTextSize(2);
     spr.setTextColor(C_GREY, C_HDR);
     spr.drawString("EVENT LOG", SCR_W / 2, LOG_Y + 8);
 
+    spr.setTextSize(1);                         // reset before Font4 to avoid 2x scaling
     spr.setTextFont(4);
     spr.setTextColor(C_ACCENT, C_HDR);
-    spr.drawString("fuelstation.local/log", SCR_W / 2, LOG_Y + 26);
+    spr.drawString("fuelstation.local/log", SCR_W / 2, LOG_Y + 34);
     spr.setTextFont(1);
 
-    // ── Hint strip ───────────────────────────────────────────────
-    spr.setTextSize(1);
-    spr.setTextColor(C_GREY, C_BG);
-    spr.drawString("Open browser to configure or update firmware  |  OTA update available via WIFI",
-                   SCR_W / 2, LOG_Y + LOG_H + 12);
+    // ── Info card ────────────────────────────────────────────────
+    const int INFO_Y = LOG_Y + LOG_H + 6;       // 244
+    const int INFO_H = 50;                      // bottom at y=294, clear of msg bar at y=296
+
+    spr.fillRoundRect(8, INFO_Y, SCR_W - 16, INFO_H, 6, C_HDR);
+    spr.drawRoundRect(8, INFO_Y, SCR_W - 16, INFO_H, 6, C_GREY);
+
+    spr.setTextSize(2);
+    spr.setTextColor(C_WHITE, C_HDR);
+    spr.drawString("Open fuelstation.local in any browser",
+                   SCR_W / 2, INFO_Y + 8);
+    spr.drawString("to configure WiFi and update firmware",
+                   SCR_W / 2, INFO_Y + 28);
 }
 
 // ════════════════════════════════════════════════════════════════

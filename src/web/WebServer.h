@@ -11,13 +11,7 @@
 // ── Wi-Fi ─────────────────────────────────────────────────────────
 #define AP_SSID  "MCP-FuelStation-V2"
 #define AP_PASS  "fuelpump1"
-// Home WiFi — set via build flags (-DHOME_SSID, -DHOME_PASS)
-#ifndef HOME_SSID
-  #define HOME_SSID ""
-#endif
-#ifndef HOME_PASS
-  #define HOME_PASS ""
-#endif
+// Home WiFi credentials are loaded from /wifi.json at runtime.
 
 // ── OTA ───────────────────────────────────────────────────────────
 #define OTA_MAX_FW_BYTES  (2 * 1024 * 1024)   // 2 MB upload limit
@@ -28,3 +22,4 @@ void WebServer_Update();                        // call every loop
 void WebServer_BroadcastState(const String &json);
 String WebServer_GetLocalIP();
 void WebServer_SetCommandHandler(void (*fn)(const String &cmd));
+String WebServer_GetSavedSSID();                // "" if not configured

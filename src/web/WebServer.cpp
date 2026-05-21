@@ -833,6 +833,7 @@ static void handleGetModels()
                 "\"fillSpd\":"    + m.fillSpeed      + ","
                 "\"drainSpd\":"   + m.drainSpeed     + ","
                 "\"purge\":"      + m.purgeSecs      + ","
+                "\"slowFill\":"   + m.slowFillPct    + ","
                 "\"totalFills\":" + m.totalFills     + ","
                 "\"totalDrains\":" + m.totalDrains   + ","
                 "\"hasImage\":"   + (m.hasImage ? "true" : "false") + ","
@@ -866,6 +867,7 @@ static void handlePostModel()
     m.fillSpeed     = doc["fillSpd"]  | m.fillSpeed;
     m.drainSpeed    = doc["drainSpd"] | m.drainSpeed;
     m.purgeSecs     = doc["purge"]    | m.purgeSecs;
+    m.slowFillPct   = constrain((int)(doc["slowFill"] | m.slowFillPct), 0, 30);
     HeliLib_Save(idx);
 
     httpServer.sendHeader("Access-Control-Allow-Origin", "*");

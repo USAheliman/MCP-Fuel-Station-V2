@@ -18,6 +18,7 @@ struct HeliModel {
     int      fillSpeed;        // ml/min setpoint
     int      drainSpeed;       // ml/min setpoint
     int      purgeSecs;        // overflow purge duration (0 = skip)
+    int      slowFillPct;     // slow fill zone % from full (0 = disabled)
     uint32_t totalFills;
     uint32_t totalDrains;
     uint32_t totalFillMl;

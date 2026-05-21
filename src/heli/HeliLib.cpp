@@ -99,6 +99,7 @@ void HeliLib_Load()
                         m.fillSpeed     = doc["fillSpd"]    | 500;
                         m.drainSpeed    = doc["drainSpd"]   | 500;
                         m.purgeSecs     = doc["purge"]      | 3;
+                        m.slowFillPct   = doc["slowFill"]   | 0;
                         m.totalFills    = doc["totalFills"] | 0;
                         m.totalDrains   = doc["totalDrains"]| 0;
                         m.totalFillMl   = doc["totalFillMl"]| 0;
@@ -142,6 +143,7 @@ void HeliLib_Save(int idx)
     doc["fillSpd"]     = m.fillSpeed;
     doc["drainSpd"]    = m.drainSpeed;
     doc["purge"]       = m.purgeSecs;
+    doc["slowFill"]    = m.slowFillPct;
     doc["totalFills"]  = m.totalFills;
     doc["totalDrains"] = m.totalDrains;
     doc["totalFillMl"] = m.totalFillMl;

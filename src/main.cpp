@@ -47,6 +47,7 @@ int targetDrainMl     = 0;
 static uint32_t fillStartPumpMs     = 0;
 static uint32_t fillBlockedSinceMs  = 0;
 static bool     fillFilterWarnFired = false;
+static bool     slowFillLogged      = false;
 static uint32_t drainBlockedSinceMs = 0;
 static bool     drainFilterWarnFired= false;
 
@@ -259,7 +260,7 @@ static String BuildWebStateJson()
     j += "\"fillVol\":"      + String(lastFillVolumeMl)  + ",";
     j += "\"fillTarget\":"   + String(targetFillMl)      + ",";
     j += "\"fillPct\":"      + String(fillPct)           + ",";
-    j += "\"fillSpeedSlider\":" + String(closedLoopTargetMlMin > 0 ? closedLoopTargetMlMin : m.fillSpeed) + ",";
+    j += "\"fillSpeedSlider\":" + String(m.fillSpeed) + ",";
     j += "\"drainFlow\":"    + String(drainFlow)         + ",";
     j += "\"drainVol\":"     + String(lastDrainVolumeMl) + ",";
     j += "\"drainPct\":"     + String(drainPct)          + ",";
@@ -285,6 +286,7 @@ static String BuildWebStateJson()
     // Setup stats for active model
     j += "\"setupStats\":{";
     j += "\"purge\":"       + String(m.purgeSecs)   + ",";
+    j += "\"slowFill\":"    + String(m.slowFillPct) + ",";
     j += "\"totalFills\":"  + String(m.totalFills)  + ",";
     j += "\"totalDrains\":" + String(m.totalDrains) + ",";
     j += "\"totalFillVol\":"  + String(m.totalFillMl  / 1000.0f, 1) + ",";
@@ -524,6 +526,7 @@ void BeginFill()
     fillStartPumpMs     = millis();
     fillBlockedSinceMs  = 0;
     fillFilterWarnFired = false;
+    slowFillLogged      = false;
 
     Logger_Write(LOG_INFO, CAT_PUMP, "FILL_START",
                  heliModels[activeModelIndex].name, (float)targetFillMl);
@@ -595,6 +598,27 @@ static void UpdateFillFlow(uint32_t now)
     int   volumeMl    = (int)((float)p / fillPulsesPerLiter * 1000.0f + 0.5f);
 
     lastFillVolumeMl = volumeMl;
+
+    // Slow fill: linearly throttle fill speed when within slowFillPct% of full
+    {
+        int base    = heliModels[activeModelIndex].fillSpeed;
+        int slowPct = heliModels[activeModelIndex].slowFillPct;
+        if (slowPct > 0 && targetFillMl > 0) {
+            float fraction  = (float)volumeMl / (float)targetFillMl;
+            float slowStart = 1.0f - slowPct / 100.0f;
+            if (fraction >= slowStart) {
+                float progress    = constrain((fraction - slowStart) / (1.0f - slowStart), 0.0f, 1.0f);
+                float speedFactor = 1.0f - progress * 0.75f;  // full speed → 25% at 100% full
+                base = max((int)(base * speedFactor + 0.5f), 50);
+                if (!slowFillLogged) {
+                    slowFillLogged = true;
+                    Logger_Write(LOG_INFO, CAT_PUMP, "SLOW_FILL_ZONE",
+                                 heliModels[activeModelIndex].name, (float)volumeMl);
+                }
+            }
+        }
+        closedLoopTargetMlMin = base;
+    }
     Pump_UpdateFillClosedLoop(flowMlMin);
 
     gDisplay.flowMlMin = flowMlMin;
@@ -646,7 +670,7 @@ static void UpdateFillFlow(uint32_t now)
     if (!fillCalActive && PumpEnabled && closedLoopActive && !fillFilterWarnFired &&
         mlPerMinPerPwm > 0.0f && fillStartPumpMs > 0 &&
         (now - fillStartPumpMs) >= FILTER_SETTLE_MS) {
-        int expectedPwm = Pump_MlMinToPwm(closedLoopTargetMlMin);
+        int expectedPwm = Pump_MlMinToPwm(heliModels[activeModelIndex].fillSpeed);
         if (expectedPwm > 0 && closedLoopCurrentPwm > (int)(expectedPwm * FILTER_PWM_MULT)) {
             fillFilterWarnFired = true;
             Logger_Write(LOG_WARN, CAT_PUMP, "FILTER_WARN",
@@ -955,9 +979,9 @@ static void encoderPoll()
         // During fill/drain: encoder adjusts pump speed in 50 ml/min steps
         const int step = 50;
         if (closedLoopActive) {
-            closedLoopTargetMlMin = constrain(closedLoopTargetMlMin + (acc > 0 ? step : -step), 50, 3000);
-            heliModels[activeModelIndex].fillSpeed = closedLoopTargetMlMin;
-            char buf[32]; snprintf(buf, sizeof(buf), "Speed: %d ml/min", closedLoopTargetMlMin);
+            heliModels[activeModelIndex].fillSpeed = constrain(heliModels[activeModelIndex].fillSpeed + (acc > 0 ? step : -step), 50, 3000);
+            closedLoopTargetMlMin = heliModels[activeModelIndex].fillSpeed;
+            char buf[32]; snprintf(buf, sizeof(buf), "Speed: %d ml/min", heliModels[activeModelIndex].fillSpeed);
             SetMessage(buf, MSG_FILLING);
         } else if (drainClosedLoopActive) {
             drainClosedLoopTargetMlMin = constrain(drainClosedLoopTargetMlMin + (acc > 0 ? step : -step), 50, 3000);
@@ -1294,7 +1318,7 @@ void loop()
         gDisplay.pumpSpeedPct = 0;
         gDisplay.flowMlMin    = 0;
         gDisplay.mainTankPct  = 0;
-        gDisplay.volumeMl     = 0;
+        if (!Screen_IsPostPump()) gDisplay.volumeMl = 0;
     }
 
     // Clear startup IP message after 6 s; then show normal idle text

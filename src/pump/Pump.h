@@ -13,9 +13,13 @@
 
 // ── Ramp ─────────────────────────────────────────────────────────
 // At 50 ms interval: STEP_UP=5 → full range in ~2 s, STEP_DOWN=10 → stop in ~1 s
-#define RAMP_INTERVAL_MS  50
-#define RAMP_STEP_UP       5
-#define RAMP_STEP_DOWN    10
+#define RAMP_INTERVAL_MS   50
+#define RAMP_STEP_UP        5
+#define RAMP_STEP_DOWN     10
+// Closed-loop smooth tracking: 1 PWM unit/tick when within CL_SMOOTH_THRESHOLD,
+// falls back to RAMP_STEP_UP for large gaps (startup / big setpoint changes)
+#define CL_SMOOTH_STEP       1
+#define CL_SMOOTH_THRESHOLD 20
 
 // ── Closed loop PI ───────────────────────────────────────────────
 #define CL_KP              0.015f

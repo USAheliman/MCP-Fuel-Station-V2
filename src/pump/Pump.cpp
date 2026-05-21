@@ -31,8 +31,9 @@ float   drainClosedLoopPwmFloat    = 0.0f;
 int     drainClosedLoopCurrentPwm  = 0;
 static  uint8_t drainClSettledCount = 0;
 
-static int  currentSpeedSigned = 0;
-static int  targetSpeedSigned  = 0;
+static int   currentSpeedSigned = 0;
+static int   targetSpeedSigned  = 0;
+static float clSmoothedPwm      = 0.0f;  // smoothed CL PWM fed to hardware
 
 // ── Init ─────────────────────────────────────────────────────────
 void Pump_Init()
@@ -95,7 +96,26 @@ void Pump_UpdateRamp()
     if (now - lastMs < RAMP_INTERVAL_MS) return;
     lastMs = now;
 
-    int desired = PumpEnabled ? targetSpeedSigned : 0;
+    int desired;
+    if (!PumpEnabled) {
+        desired = 0;
+    } else if (closedLoopActive) {
+        // Smooth small corrections; fall back to fast step for large gaps (startup)
+        int gap  = closedLoopCurrentPwm - (int)(clSmoothedPwm + 0.5f);
+        int step = (abs(gap) > CL_SMOOTH_THRESHOLD) ? RAMP_STEP_UP : CL_SMOOTH_STEP;
+        if (gap > 0) clSmoothedPwm += min(step, gap);
+        else         clSmoothedPwm -= min(step, -gap);
+        desired = +(int)(clSmoothedPwm + 0.5f);
+    } else if (drainClosedLoopActive) {
+        int gap  = drainClosedLoopCurrentPwm - (int)(clSmoothedPwm + 0.5f);
+        int step = (abs(gap) > CL_SMOOTH_THRESHOLD) ? RAMP_STEP_UP : CL_SMOOTH_STEP;
+        if (gap > 0) clSmoothedPwm += min(step, gap);
+        else         clSmoothedPwm -= min(step, -gap);
+        desired = -(int)(clSmoothedPwm + 0.5f);
+    } else {
+        desired = targetSpeedSigned;
+    }
+
     if ((currentSpeedSigned > 0 && desired < 0) ||
         (currentSpeedSigned < 0 && desired > 0)) desired = 0;
     if (currentSpeedSigned == desired) return;
@@ -122,6 +142,7 @@ void Pump_Stop()
     drainClosedLoopHasSettled  = false;
     targetSpeedSigned          = 0;
     currentSpeedSigned         = 0;
+    clSmoothedPwm              = 0.0f;
     Pump_SetOutput(0);
     Pump_Disable();
 }
@@ -132,6 +153,7 @@ void Pump_ResetFillLoop()
     closedLoopPwmFloat    = (float)MIN_PWM;
     closedLoopCurrentPwm  = MIN_PWM;
     clSettledCount        = 0;
+    clSmoothedPwm         = (float)currentSpeedSigned;  // start smooth from current hw speed
 }
 
 void Pump_ResetDrainLoop()
@@ -141,6 +163,7 @@ void Pump_ResetDrainLoop()
     drainClosedLoopCurrentPwm  = MIN_PWM;
     drainClSettledCount        = 0;
     drainClosedLoopHasSettled  = false;
+    clSmoothedPwm              = (float)abs(currentSpeedSigned);  // start smooth from current hw speed
 }
 
 // ── Conversion helpers (ported 1:1 from V1) ──────────────────────
@@ -194,8 +217,7 @@ void Pump_UpdateFillClosedLoop(int actualFlowMlMin)
     bool atLimit = (newPwm == MIN_PWM || newPwm == MAX_PWM);
     if (!atLimit) closedLoopIntegral = newIntegral;
 
-    closedLoopCurrentPwm = newPwm;
-    Pump_SetTarget(+closedLoopCurrentPwm);
+    closedLoopCurrentPwm = newPwm;  // ramp picks this up smoothly each tick
 
     // Self-correct mlPerMinPerPwm when settled
     if (fabsf(error) <= CL_SETTLED_TOLERANCE && !atLimit && closedLoopCurrentPwm > MIN_PWM) {
@@ -233,8 +255,7 @@ void Pump_UpdateDrainClosedLoop(int actualFlowMlMin)
     bool atLimit = (newPwm == MIN_PWM || newPwm == MAX_PWM);
     if (!atLimit) drainClosedLoopIntegral = newIntegral;
 
-    drainClosedLoopCurrentPwm = newPwm;
-    Pump_SetTarget(-drainClosedLoopCurrentPwm);
+    drainClosedLoopCurrentPwm = newPwm;  // ramp picks this up smoothly each tick
 
     if (fabsf(error) <= CL_SETTLED_TOLERANCE && !atLimit && drainClosedLoopCurrentPwm > MIN_PWM) {
         drainClSettledCount++;
